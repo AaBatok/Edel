@@ -5,14 +5,11 @@ Bot otomatis untuk daily vote pada **Listing Calls** di [Edel Finance Runway Des
 ## ✨ Features
 
 - **Auto Vote** setiap 1 jam (configurable via cron)
-- **Pure HTTP** — no Chrome, no browser, cuma HTTP request
 - **Telegram Notifications** — notif realtime setiap vote berhasil/gagal
 - **Smart Voting** — random selection untuk head-to-head calls
 - **Session Import** — login di Chrome PC, copy cookie, paste di VPS
 - **Retry Logic** — auto retry dengan exponential backoff
 - **VPS Ready** — support `screen`, auto-restart
-
-> ⚠️ **SECURITY**: JANGAN commit file `.env` atau folder `sessions/`!
 
 ## 📋 Prerequisites
 
