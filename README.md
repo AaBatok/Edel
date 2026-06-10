@@ -26,8 +26,6 @@ cd Edel
 npm install
 ```
 
-> 💡 Hanya 4 dependencies ringan — tanpa download browser!
-
 ### 2. Configure
 
 ```bash
