@@ -1,5 +1,20 @@
+# Dependencies
 node_modules/
+
+# Environment (JANGAN PUSH - berisi token rahasia!)
 .env
+.env.local
+.env.*.local
+
+# Session data (berisi login cookies)
 sessions/
+
+# Generated files
 logs/
 screenshots/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
