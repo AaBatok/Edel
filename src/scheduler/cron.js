@@ -95,16 +95,26 @@ export async function startScheduler() {
     process.exit(1);
   }
 
-  logSeparator();
-  logger.info('🤖 ═══════════════════════════════════════');
-  logger.info('🤖  EDEL RUNWAY DESK - AUTO VOTE BOT');
-  logger.info('🤖 ═══════════════════════════════════════');
-  logger.info('');
-  logger.info(`📅 Schedule: ${schedule}`);
-  logger.info(`🎯 Strategy: ${config.voteStrategy}`);
-  logger.info(`🔄 Max retries: ${config.maxRetries}`);
-  logger.info(`📨 Telegram: ${config.telegramBotToken ? 'Configured ✅' : 'Not configured ⚠️'}`);
-  logger.info(`🌐 Mode: Pure HTTP (no browser needed)`);
+  console.log('');
+  console.log('\x1b[36m' +
+  `                                                                                              
+  ▄▄▄▄▄▄▄                               ▄▄                     ██   ▄▄▄   ▄▄▄  ▄▄▄▄▄▄▄   ▄▄▄▄   
+  ███▀▀███▄        ██         ▄▄        ██                     ██   ███   ███ ███▀▀▀▀▀ ▄██▀▀██▄ 
+  ███▄▄███▀  ▀▀█▄ ▀██▀▀ ▄███▄ ██ ▄█▀ ▄████ ████▄ ▄████ ████▄   ██   █████████ ███      ███  ███ 
+  ███  ███▄ ▄█▀██  ██   ██ ██ ████   ██ ██ ██ ▀▀ ██ ██ ██ ██   ██   ███▀▀▀███ ███      ███▀▀███ 
+  ████████▀ ▀█▄██  ██   ▀███▀ ██ ▀█▄ ▀████ ██    ▀████ ██ ██   ██   ███   ███ ▀███████ ███  ███ 
+                                                    ██         ██                               
+                                                  ▀▀▀                                           ` + '\x1b[0m');
+  console.log('');
+  console.log('\x1b[90m  ──────────────────────────────────────────────────────────────────────────────────\x1b[0m');
+  console.log('\x1b[33m   ⚡ Edel Runway Desk — Auto Vote Bot v2.0\x1b[0m');
+  console.log('\x1b[90m   🌐 Pure HTTP Mode — No Browser Needed\x1b[0m');
+  console.log('\x1b[90m  ──────────────────────────────────────────────────────────────────────────────────\x1b[0m');
+  console.log('');
+  logger.info(`📅 Schedule  : ${schedule}`);
+  logger.info(`🎯 Strategy  : ${config.voteStrategy}`);
+  logger.info(`🔄 Retries   : ${config.maxRetries}`);
+  logger.info(`📨 Telegram  : ${config.telegramBotToken ? 'Configured ✅' : 'Not configured ⚠️'}`);
   logger.info('');
 
   // Send Telegram notification that bot started
