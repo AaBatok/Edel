@@ -90,10 +90,19 @@ export async function notifySessionExpired() {
     '🔑 *SESSION EXPIRED*',
     '',
     'Session login sudah expired.',
-    'Perlu login ulang dengan passkey.',
     '',
-    'Jalankan: `npm run setup`',
-    'Lalu restart bot.',
+    '*Cara update (langsung di sini):*',
+    '1. Buka Chrome → login https://runway.edel.finance',
+    '2. Tekan F12 → Network → Refresh halaman',
+    '3. Klik request pertama → cari header Cookie',
+    '4. Copy value cookie-nya',
+    '5. *Paste langsung di chat ini* ⬇️',
+    '',
+    '💡 Bisa paste format:',
+    '• `edel_session=eyJ...;cookie2=xxx`',
+    '• atau JWT saja: `eyJhbGci...`',
+    '',
+    '📱 Bot sedang menunggu cookie dari kamu...',
   ].join('\n');
 
   return sendTelegram(msg);

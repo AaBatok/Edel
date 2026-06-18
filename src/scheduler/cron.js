@@ -1,6 +1,7 @@
 import config from '../utils/config.js';
 import logger, { logSeparator } from '../utils/logger.js';
 import { performVote } from '../bot/voter.js';
+import { waitForCookieViaTelegram } from '../auth/telegram-import.js';
 import {
   notifyVoteSuccess,
   notifyVoteFailed,
@@ -10,6 +11,10 @@ import {
   notifyAlreadyVoted,
   sendTelegram,
 } from '../utils/telegram.js';
+
+// Track whether we already sent a session-expired notification
+// to avoid spamming the user on every retry
+let sessionExpiredNotified = false;
 
 // Track active timer for graceful shutdown
 let nextVoteTimer = null;
@@ -51,10 +56,33 @@ async function voteCycle() {
         }
       }
 
-      // Check if session expired
+      // Check if session expired → try Telegram re-import
       if (result.details?.sessionExpired) {
-        logger.error('🔑 Session expired. Need re-import.');
-        await notifySessionExpired();
+        logger.error('🔑 Session expired. Mencoba import via Telegram...');
+
+        // Only send notification once (avoid spam on retries)
+        if (!sessionExpiredNotified) {
+          sessionExpiredNotified = true;
+          await notifySessionExpired();
+        }
+
+        // Wait for user to paste cookie in Telegram (up to 60 min)
+        const imported = await waitForCookieViaTelegram(60);
+        if (imported) {
+          logger.info('🔄 Session refreshed via Telegram! Retrying vote...');
+          sessionExpiredNotified = false;
+          // Retry the vote with fresh session
+          const retryResult = await performVote();
+          if (retryResult.success && !retryResult.details?.note) {
+            await notifyVoteSuccess(retryResult.details);
+            return 'voted';
+          } else if (retryResult.success) {
+            await notifyAlreadyVoted(retryResult.details?.note || 'Retried after re-login');
+            return retryResult.details?.note?.includes('Already submitted') ? 'already_voted' : 'waiting';
+          }
+        }
+
+        // Import failed or vote after import failed
         return 'failed';
       }
 
