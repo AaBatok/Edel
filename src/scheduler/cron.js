@@ -2,6 +2,7 @@ import config from '../utils/config.js';
 import logger, { logSeparator } from '../utils/logger.js';
 import { performVote } from '../bot/voter.js';
 import { waitForCookieViaTelegram } from '../auth/telegram-import.js';
+import { initDisplay, updateStatus, destroyDisplay } from '../utils/display.js';
 import {
   notifyVoteSuccess,
   notifyVoteFailed,
@@ -164,6 +165,19 @@ function scheduleNextVote(delayMs) {
   const nextStr = nextTime.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
   const delayMin = Math.round(delayMs / 60000);
 
+  // Update TUI header with next vote info
+  const nextHHmm = nextTime.toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  updateStatus({
+    status: 'LIVE',
+    nextVote: nextHHmm,
+    countdown: `${delayMin}m lagi`,
+  });
+
   logger.info(`⏰ Next vote scheduled: ${nextStr} (in ${delayMin} minutes)`);
 
   nextVoteTimer = setTimeout(async () => {
@@ -174,7 +188,6 @@ function scheduleNextVote(delayMs) {
       await notifyNextVote(scheduledTime);
     } catch (err) {
       logger.error(`Scheduled vote cycle error: ${err.message}`);
-      // On unexpected error, retry in retryIntervalMinutes
       const retryDelay = config.retryIntervalMinutes * 60 * 1000;
       const scheduledTime = scheduleNextVote(retryDelay);
       await notifyNextVote(scheduledTime);
@@ -195,24 +208,17 @@ function scheduleNextVote(delayMs) {
  *   3. Repeat forever until bot stopped
  */
 export async function startScheduler() {
-  console.log('');
-  console.log('\x1b[36m' +
-  ` ██████╗  █████╗ ████████╗ ██████╗ ██╗  ██╗██████╗ ██████╗  ██████╗ ███╗   ██╗        ██╗  ██╗ ██████╗ █████╗ 
- ██╔══██╗██╔══██╗╚══██╔══╝██╔═══██╗██║ ██╔╝██╔══██╗██╔══██╗██╔════╝ ████╗  ██║        ██║  ██║██╔════╝██╔══██╗
- ██████╔╝███████║   ██║   ██║   ██║█████╔╝ ██║  ██║██████╔╝██║  ███╗██╔██╗ ██║        ███████║██║     ███████║
- ██╔══██╗██╔══██║   ██║   ██║   ██║██╔═██╗ ██║  ██║██╔══██╗██║   ██║██║╚██╗██║        ██╔══██║██║     ██╔══██║
- ██████╔╝██║  ██║   ██║   ╚██████╔╝██║  ██╗██████╔╝██║  ██║╚██████╔╝██║ ╚████║        ██║  ██║╚██████╗██║  ██║
- ╚═════╝ ╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝        ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝` + '\x1b[0m');
-  console.log('');
-  console.log('\x1b[90m  ──────────────────────────────────────────────────────────────────────────────────\x1b[0m');
-  console.log('\x1b[33m   ⚡ Edel Runway Desk — Auto Vote Bot v2.1\x1b[0m');
-  console.log('\x1b[90m   🌐 Pure HTTP Mode — Dynamic Scheduling\x1b[0m');
-  console.log('\x1b[90m  ──────────────────────────────────────────────────────────────────────────────────\x1b[0m');
-  console.log('');
-  logger.info(`📅 Interval : ${config.voteIntervalMinutes} min + ${config.voteBufferMinutes} min buffer`);
-  logger.info(`🔄 Retry    : every ${config.retryIntervalMinutes} min (when not ready)`);
+  const totalMin = config.voteIntervalMinutes + config.voteBufferMinutes;
+
+  // Initialize TUI with sticky header
+  initDisplay({
+    strategy: config.voteStrategy,
+    interval: String(totalMin),
+  });
+
+  logger.info(`📅 Interval : ${config.voteIntervalMinutes}m + ${config.voteBufferMinutes}m buffer = ${totalMin}m`);
+  logger.info(`🔄 Retry    : every ${config.retryIntervalMinutes}m`);
   logger.info(`🎯 Strategy : ${config.voteStrategy}`);
-  logger.info(`🔁 Retries  : ${config.maxRetries} per cycle`);
   logger.info(`📨 Telegram : ${config.telegramBotToken ? 'Configured ✅' : 'Not configured ⚠️'}`);
   logger.info('');
 
@@ -234,6 +240,7 @@ export async function startScheduler() {
   const shutdown = async () => {
     logger.info('');
     logger.info('🛑 Bot stopping...');
+    destroyDisplay();
     if (nextVoteTimer) {
       clearTimeout(nextVoteTimer);
       nextVoteTimer = null;

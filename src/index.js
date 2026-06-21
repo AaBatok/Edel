@@ -14,30 +14,22 @@ const extraArg = process.argv[3] || null;
  */
 function printHelp() {
   console.log(`
-\x1b[36m
- ██████╗  █████╗ ████████╗ ██████╗ ██╗  ██╗██████╗ ██████╗  ██████╗ ███╗   ██╗        ██╗  ██╗ ██████╗ █████╗ 
- ██╔══██╗██╔══██╗╚══██╔══╝██╔═══██╗██║ ██╔╝██╔══██╗██╔══██╗██╔════╝ ████╗  ██║        ██║  ██║██╔════╝██╔══██╗
- ██████╔╝███████║   ██║   ██║   ██║█████╔╝ ██║  ██║██████╔╝██║  ███╗██╔██╗ ██║        ███████║██║     ███████║
- ██╔══██╗██╔══██║   ██║   ██║   ██║██╔═██╗ ██║  ██║██╔══██╗██║   ██║██║╚██╗██║        ██╔══██║██║     ██╔══██║
- ██████╔╝██║  ██║   ██║   ╚██████╔╝██║  ██╗██████╔╝██║  ██║╚██████╔╝██║ ╚████║        ██║  ██║╚██████╗██║  ██║
- ╚═════╝ ╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝        ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝\x1b[0m
-\x1b[90m  ──────────────────────────────────────────────────────────────────────────────────\x1b[0m
-\x1b[33m   ⚡ Edel Runway Desk — Auto Vote Bot v2.0\x1b[0m
-\x1b[90m   🌐 Pure HTTP Mode — No Browser Needed\x1b[0m
-\x1b[90m  ──────────────────────────────────────────────────────────────────────────────────\x1b[0m
+\x1b[96m\x1b[1m  EDEL BOT \x1b[0m\x1b[90m─\x1b[0m\x1b[37m AUTO VOTE\x1b[0m
+\x1b[90m  Created by Batokdrgn | HCA\x1b[0m
+\x1b[35m  ════════════════════════════════════════════════\x1b[0m
 
 Usage: node src/index.js <command>
 
 Commands:
   import    ⭐ Import session dari Chrome DevTools
-            Login di Chrome PC → F12 → Network → copy Cookie → paste.
+            Login di Chrome → F12 → Network → copy Cookie → paste.
 
   import-file <path>
             Import session dari file JSON.
 
   vote      Vote sekali saja (tanpa scheduling)
 
-  start     Mulai bot scheduler (default: setiap 1 jam)
+  start     Mulai bot scheduler (auto vote + dynamic scheduling)
             Bot berjalan terus sampai dihentikan (Ctrl+C)
 
   status    Cek status session dan konfigurasi
@@ -52,13 +44,12 @@ NPM Shortcuts:
   npm run start     → mulai bot scheduler
 
 Workflow:
-  1. Login di Chrome PC → F12 → Network → copy Cookie
+  1. Login di Chrome → F12 → Network → copy Cookie
   2. Di VPS: npm run import → paste cookie
   3. Di VPS: npm run vote (test)
   4. Di VPS: npm run start (jalankan bot)
 
 💡 Bot ini TIDAK butuh Chrome/browser di VPS!
-   Semua dilakukan via HTTP request langsung.
 `);
 }
 
