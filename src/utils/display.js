@@ -92,8 +92,8 @@ function drawHeader() {
 
   const rows = [
     `${C.magenta}${line}${C.reset}`,
-    center(`${C.cyanBr}${C.bold}EDEL BOT${C.reset} ${C.dim}─${C.reset} ${C.whiteBr}AUTO VOTE${C.reset}`, w),
-    center(`${C.gray}Created by Batokdrgn | HCA${C.reset}`, w),
+    center(`${C.cyanBr}${C.bold}EDEL BOT${C.reset} ${C.dim}─${C.reset} ${C.gray}AUTO VOTE${C.reset}`, w),
+    center(`${C.whiteBr}Created by Batokdrgn | HCA${C.reset}`, w),
     center(statusLine, w),
     `${C.magenta}${line}${C.reset}`,
     `${C.magentaBr}── ACTIVITY ${C.magenta}${thinLine.substring(0, w - 13)}${C.reset}`,
