@@ -89,9 +89,17 @@ function parseCookieFromMessage(text) {
  * Uses Telegram Bot API long polling (getUpdates) to wait for
  * the user to paste a cookie string in the chat.
  *
+ * IMPORTANT: The offset is persisted between calls so that cookie
+ * messages sent between wait cycles are NOT lost.
+ *
  * @param {number} timeoutMinutes - Max time to wait (default: 60 min)
  * @returns {boolean} true if cookie was received and saved
  */
+
+// Persistent offset — only initialized once on first call
+let _telegramOffset = 0;
+let _offsetInitialized = false;
+
 export async function waitForCookieViaTelegram(timeoutMinutes = 60) {
   const { telegramBotToken, telegramChatId } = config;
 
@@ -105,24 +113,27 @@ export async function waitForCookieViaTelegram(timeoutMinutes = 60) {
 
   const startTime = Date.now();
   const timeoutMs = timeoutMinutes * 60 * 1000;
-  let offset = 0;
 
-  // Skip old messages — get the latest update_id
-  try {
-    const initUrl = `${TELEGRAM_API}${telegramBotToken}/getUpdates?offset=-1&limit=1`;
-    const initRes = await fetch(initUrl);
-    const initData = await initRes.json();
-    if (initData.ok && initData.result.length > 0) {
-      offset = initData.result[initData.result.length - 1].update_id + 1;
+  // Only skip old messages on the very FIRST call after bot start.
+  // Subsequent calls reuse the offset so no messages are lost.
+  if (!_offsetInitialized) {
+    _offsetInitialized = true;
+    try {
+      const initUrl = `${TELEGRAM_API}${telegramBotToken}/getUpdates?offset=-1&limit=1`;
+      const initRes = await fetch(initUrl);
+      const initData = await initRes.json();
+      if (initData.ok && initData.result.length > 0) {
+        _telegramOffset = initData.result[initData.result.length - 1].update_id + 1;
+      }
+    } catch (e) {
+      logger.debug(`Init offset error: ${e.message}`);
     }
-  } catch (e) {
-    logger.debug(`Init offset error: ${e.message}`);
   }
 
   while (Date.now() - startTime < timeoutMs) {
     try {
       // Long polling — wait up to 30 seconds for new messages
-      const url = `${TELEGRAM_API}${telegramBotToken}/getUpdates?offset=${offset}&timeout=30`;
+      const url = `${TELEGRAM_API}${telegramBotToken}/getUpdates?offset=${_telegramOffset}&timeout=30`;
       const res = await fetch(url);
       const data = await res.json();
 
@@ -133,7 +144,7 @@ export async function waitForCookieViaTelegram(timeoutMinutes = 60) {
       }
 
       for (const update of data.result) {
-        offset = update.update_id + 1;
+        _telegramOffset = update.update_id + 1;
         const msg = update.message;
 
         if (!msg || !msg.text) continue;
