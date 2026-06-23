@@ -38,9 +38,34 @@ function findKey(obj, key, maxDepth = 5) {
 function parseRoundData(data) {
   if (!data) return null;
 
-  // Log raw structure for debugging
+  // ── Verbose structure logging ──────────────────
   const keys = Object.keys(data);
-  logger.debug(`📦 API response keys: ${keys.join(', ')}`);
+  logger.info(`📦 API response keys: [${keys.join(', ')}]`);
+  if (data.round) {
+    const rKeys = Object.keys(data.round);
+    logger.info(`   ↳ round keys: [${rKeys.join(', ')}]`);
+    // Check for arrays inside round
+    for (const k of rKeys) {
+      if (Array.isArray(data.round[k])) {
+        logger.info(`   ↳ round.${k} = Array(${data.round[k].length})`);
+      }
+    }
+  }
+  if (data.preview) {
+    const pKeys = Object.keys(data.preview);
+    logger.info(`   ↳ preview keys: [${pKeys.join(', ')}]`);
+    for (const k of pKeys) {
+      if (Array.isArray(data.preview[k])) {
+        logger.info(`   ↳ preview.${k} = Array(${data.preview[k].length})`);
+      }
+    }
+  }
+  // Log top-level arrays
+  for (const k of keys) {
+    if (Array.isArray(data[k])) {
+      logger.info(`   ↳ ${k} = Array(${data[k].length})`);
+    }
+  }
 
   let status = null;
   let roundId = null;
@@ -49,39 +74,8 @@ function parseRoundData(data) {
   let stakeAmount = null;
   let isPreview = false;
 
-  // ── Preview API format ──────────────────────
-  // { preview: { id, roundWindowId, decisions: [...], ... }, actions: {...}, currentWindow: {...} }
-  if (data.preview) {
-    isPreview = true;
-    const preview = data.preview;
-    roundId = preview.id;
-    status = 'LOCKED'; // If preview exists, selections are open
-    stakeAmount = preview.stakeAmount;
-
-    // Decisions in preview format
-    fixtures = preview.decisions || preview.fixtures || [];
-
-    // Map preview decisions to our standard fixture format
-    if (fixtures.length > 0 && fixtures[0].listingDecisionId) {
-      fixtures = fixtures.map((d) => ({
-        id: d.listingDecisionId || d.id,
-        roundDecisionId: d.listingDecisionId || d.id,
-        teamAId: d.optionA?.assetId || d.assetAId || d.teamAId,
-        teamBId: d.optionB?.assetId || d.assetBId || d.teamBId,
-        selectedTeamId: d.selectedAssetId || d.selectedTeamId || null,
-        optionA: d.optionA,
-        optionB: d.optionB,
-        _raw: d,
-      }));
-    }
-
-    actions = data.actions || {};
-    logger.debug(`📊 Preview format: id=${roundId}, decisions=${fixtures.length}`);
-  }
-
-  // ── Legacy API format ──────────────────────
-  // { round: { status, id, fixtures/decisions }, actions: {startRound} }
-  if (!isPreview && data.round) {
+  // ── Detect status from round object ──────────
+  if (data.round) {
     if (data.round.status && typeof data.round.status === 'string') {
       status = data.round.status;
       roundId = data.round.id || data.round.roundId;
@@ -93,19 +87,75 @@ function parseRoundData(data) {
     }
   }
 
-  // ── Status from top-level (some responses) ──
+  // ── Detect preview ──────────────────────────
+  if (data.preview) {
+    isPreview = true;
+    if (!roundId) roundId = data.preview.id;
+    if (!status) status = 'LOCKED'; // preview = selections open
+    if (!stakeAmount) stakeAmount = data.preview.stakeAmount;
+  }
+
+  // ── Status from top-level ──────────────────
   if (!status && data.status && typeof data.status === 'string') {
     status = data.status;
   }
   if (!roundId) {
-    roundId = data.roundId || data.id || findKey(data, 'roundId') || findKey(data, 'id');
+    roundId = data.roundId || data.id || findKey(data, 'roundId');
   }
 
-  // ── Fixtures (if not already set from preview) ──
+  // ── Find fixtures/decisions from ALL possible locations ──
+  const candidateArrays = [
+    // Top-level
+    data.decisions,
+    data.fixtures,
+    data.listingDecisions,
+    data.roundDecisions,
+    data.calls,
+    // Inside round
+    data.round?.decisions,
+    data.round?.fixtures,
+    data.round?.listingDecisions,
+    data.round?.roundDecisions,
+    data.round?.calls,
+    data.round?.round?.decisions,
+    data.round?.round?.fixtures,
+    // Inside preview
+    data.preview?.decisions,
+    data.preview?.fixtures,
+    data.preview?.listingDecisions,
+    data.preview?.calls,
+    // Inside currentWindow
+    data.currentWindow?.decisions,
+    data.currentWindow?.fixtures,
+  ];
+
+  for (const arr of candidateArrays) {
+    if (Array.isArray(arr) && arr.length > 0) {
+      fixtures = arr;
+      logger.info(`   ✅ Found ${arr.length} fixtures/decisions`);
+      // Log first item structure for debugging
+      const firstItem = arr[0];
+      logger.info(`   ↳ First item keys: [${Object.keys(firstItem).join(', ')}]`);
+      break;
+    }
+  }
+
+  // Last resort: deep search
   if (!fixtures || fixtures.length === 0) {
-    fixtures = data.fixtures || data.decisions ||
-      data.round?.fixtures || data.round?.decisions ||
-      findKey(data, 'fixtures') || findKey(data, 'decisions') || [];
+    const deepDecisions = findKey(data, 'decisions', 4);
+    const deepFixtures = findKey(data, 'fixtures', 4);
+    const deepCalls = findKey(data, 'calls', 4);
+    fixtures = (Array.isArray(deepDecisions) && deepDecisions.length > 0) ? deepDecisions
+      : (Array.isArray(deepFixtures) && deepFixtures.length > 0) ? deepFixtures
+      : (Array.isArray(deepCalls) && deepCalls.length > 0) ? deepCalls
+      : [];
+    if (fixtures.length > 0) {
+      logger.info(`   ✅ Found ${fixtures.length} via deep search`);
+      logger.info(`   ↳ First item keys: [${Object.keys(fixtures[0]).join(', ')}]`);
+    } else {
+      // Dump first 2000 chars of response for debugging
+      logger.warn(`   ⚠️ No fixtures found! Full response: ${JSON.stringify(data).substring(0, 2000)}`);
+    }
   }
 
   if (!Array.isArray(fixtures)) fixtures = [];
