@@ -4,6 +4,14 @@ import logger from './logger.js';
 const TELEGRAM_API = 'https://api.telegram.org/bot';
 
 /**
+ * Escape special characters for Telegram Markdown
+ */
+function escMd(text) {
+  if (!text) return '';
+  return String(text).replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+}
+
+/**
  * Send a message via Telegram Bot API
  * @param {string} text - Message text (supports Markdown)
  * @param {object} opts
@@ -32,7 +40,24 @@ export async function sendTelegram(text, { silent = false } = {}) {
 
     if (!res.ok) {
       const body = await res.text();
-      logger.warn(`Telegram API error (${res.status}): ${body}`);
+      // If Markdown fails, retry as plain text
+      if (res.status === 400 && body.includes('parse entities')) {
+        logger.debug('Telegram Markdown failed, retrying as plain text...');
+        const res2 = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: telegramChatId,
+            text: text.replace(/[*_`\\]/g, ''),
+            disable_notification: silent,
+          }),
+        });
+        if (!res2.ok) {
+          logger.warn(`Telegram plain text also failed (${res2.status})`);
+        }
+        return res2.ok;
+      }
+      logger.warn(`Telegram API error (${res.status}): ${body.substring(0, 200)}`);
       return false;
     }
 
@@ -76,10 +101,12 @@ export async function notifyVoteSuccess(details = {}, accountId = null) {
 export async function notifyVoteFailed(details = {}, accountId = null) {
   const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
   const prefix = accountId ? `[${accountId}] ` : '';
+  // Truncate and escape error message to prevent Telegram formatting issues
+  const errorMsg = escMd(String(details.error || 'Unknown').substring(0, 150));
   const msg = [
     `❌ ${prefix}*VOTE GAGAL*`,
     '',
-    `⚠️ Error: ${details.error || 'Unknown'}`,
+    `⚠️ Error: ${errorMsg}`,
     `🎯 Strategy: \`${details.strategy || 'N/A'}\``,
     `🕐 Waktu: ${time}`,
     `🔄 Attempt: ${details.attempt || '?'}/${details.maxAttempts || '?'}`,
