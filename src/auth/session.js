@@ -5,12 +5,20 @@ import config from '../utils/config.js';
 import logger from '../utils/logger.js';
 
 /**
+ * Ensure a directory exists (creates recursively if needed)
+ * @param {string} dir - Directory path to ensure
+ */
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+/**
  * Ensure session directory exists
  */
 function ensureSessionDir() {
-  if (!fs.existsSync(config.sessionDir)) {
-    fs.mkdirSync(config.sessionDir, { recursive: true });
-  }
+  ensureDir(config.sessionDir);
 }
 
 /**
@@ -28,30 +36,34 @@ export async function saveSession(context) {
 /**
  * Save raw session state object to disk
  * @param {object} state - Storage state object
+ * @param {string} [sessionFile] - Optional path to save to (defaults to config.sessionFile)
  */
-export function saveSessionRaw(state) {
-  ensureSessionDir();
-  fs.writeFileSync(config.sessionFile, JSON.stringify(state, null, 2), 'utf-8');
-  logger.info(`💾 Session saved to ${config.sessionFile}`);
+export function saveSessionRaw(state, sessionFile) {
+  const target = sessionFile || config.sessionFile;
+  ensureDir(path.dirname(target));
+  fs.writeFileSync(target, JSON.stringify(state, null, 2), 'utf-8');
+  logger.info(`💾 Session saved to ${target}`);
 }
 
 /**
  * Load saved session state from disk
+ * @param {string} [sessionFile] - Optional path to load from (defaults to config.sessionFile)
  * @returns {object|null} Storage state object or null if not found
  */
-export function loadSession() {
-  if (!fs.existsSync(config.sessionFile)) {
-    logger.warn('⚠️  No saved session found.');
+export function loadSession(sessionFile) {
+  const target = sessionFile || config.sessionFile;
+  if (!fs.existsSync(target)) {
+    logger.warn(`⚠️  No saved session found at ${target}`);
     return null;
   }
 
   try {
-    const data = fs.readFileSync(config.sessionFile, 'utf-8');
+    const data = fs.readFileSync(target, 'utf-8');
     const state = JSON.parse(data);
-    logger.info('📂 Session loaded from disk.');
+    logger.debug(`📂 Session loaded from ${target}`);
     return state;
   } catch (err) {
-    logger.error(`Failed to load session: ${err.message}`);
+    logger.error(`Failed to load session from ${target}: ${err.message}`);
     return null;
   }
 }
@@ -155,7 +167,7 @@ function buildState(cookies) {
 // ─────────────────────────────────────────────
 //  IMPORT: Main function
 // ─────────────────────────────────────────────
-export async function importSession() {
+export async function importSession(sessionFile) {
   console.log('');
   console.log('╔══════════════════════════════════════════════════════════╗');
   console.log('║         🔐 IMPORT SESSION LOGIN                        ║');
@@ -233,7 +245,7 @@ export async function importSession() {
 
   // Save
   const state = buildState(cookies);
-  saveSessionRaw(state);
+  saveSessionRaw(state, sessionFile);
 
   console.log('');
   logger.info('✅ Session berhasil di-import!');
@@ -251,7 +263,7 @@ export async function importSession() {
 // ─────────────────────────────────────────────
 //  IMPORT: From JSON file
 // ─────────────────────────────────────────────
-export function importSessionFromFile(filePath) {
+export function importSessionFromFile(filePath, sessionFile) {
   const absPath = path.resolve(filePath);
 
   if (!fs.existsSync(absPath)) {
@@ -268,7 +280,7 @@ export function importSessionFromFile(filePath) {
       return false;
     }
 
-    saveSessionRaw(state);
+    saveSessionRaw(state, sessionFile);
 
     const cookieCount = state.cookies.length;
     const lsCount = state.origins[0]?.localStorage?.length || 0;

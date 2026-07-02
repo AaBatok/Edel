@@ -77,31 +77,69 @@ function parseRoundData(data) {
   }
 
   // ── Find fixtures/decisions ──
-  // IMPORTANT: round.decisions MUST come before preview.options!
-  // The submit API expects decisionId from round.decisions, NOT
-  // listingDecisionId from preview.options (they are different values).
-  const candidateArrays = [
-    // Round decisions (highest priority — has correct decisionId for submit)
-    data.round?.decisions,
-    data.round?.fixtures,
-    data.round?.options,
-    data.round?.round?.decisions,
-    data.round?.round?.fixtures,
-    // Preview options (fallback when round has no decisions yet)
-    data.preview?.options,
-    data.preview?.decisions,
-    data.preview?.fixtures,
-    // Top-level
-    data.decisions,
-    data.fixtures,
-    data.options,
-    data.currentWindow?.decisions,
-    data.currentWindow?.fixtures,
-  ];
+  // CRITICAL: When isPreview=true (preview submit API), we MUST use
+  // preview.options because its listingDecisionId matches the previewId scope.
+  // Using round.decisions (with decisionId) causes INVALID_PICK because those
+  // IDs belong to a different scope!
+  // When NOT preview, round.decisions comes first for legacy API.
+  const candidateArrays = isPreview
+    ? [
+        // Preview-first: IDs match previewId scope
+        data.preview?.options,
+        data.preview?.decisions,
+        data.preview?.fixtures,
+        // Fallback to round if preview has no data
+        data.round?.decisions,
+        data.round?.fixtures,
+        data.round?.options,
+        data.round?.round?.decisions,
+        data.round?.round?.fixtures,
+        // Top-level
+        data.decisions,
+        data.fixtures,
+        data.options,
+        data.currentWindow?.decisions,
+        data.currentWindow?.fixtures,
+      ]
+    : [
+        // Round-first: for legacy API
+        data.round?.decisions,
+        data.round?.fixtures,
+        data.round?.options,
+        data.round?.round?.decisions,
+        data.round?.round?.fixtures,
+        data.preview?.options,
+        data.preview?.decisions,
+        data.preview?.fixtures,
+        data.decisions,
+        data.fixtures,
+        data.options,
+        data.currentWindow?.decisions,
+        data.currentWindow?.fixtures,
+      ];
 
-  for (const arr of candidateArrays) {
+  let fixtureSource = 'unknown';
+  const candidateNames = isPreview
+    ? [
+        'preview.options', 'preview.decisions', 'preview.fixtures',
+        'round.decisions', 'round.fixtures', 'round.options',
+        'round.round.decisions', 'round.round.fixtures',
+        'data.decisions', 'data.fixtures', 'data.options',
+        'currentWindow.decisions', 'currentWindow.fixtures',
+      ]
+    : [
+        'round.decisions', 'round.fixtures', 'round.options',
+        'round.round.decisions', 'round.round.fixtures',
+        'preview.options', 'preview.decisions', 'preview.fixtures',
+        'data.decisions', 'data.fixtures', 'data.options',
+        'currentWindow.decisions', 'currentWindow.fixtures',
+      ];
+
+  for (let ci = 0; ci < candidateArrays.length; ci++) {
+    const arr = candidateArrays[ci];
     if (Array.isArray(arr) && arr.length > 0) {
       fixtures = arr;
+      fixtureSource = candidateNames[ci] || `index-${ci}`;
       break;
     }
   }
@@ -122,7 +160,14 @@ function parseRoundData(data) {
 
   const currentWindow = data.currentWindow || data.round?.currentWindow || null;
 
-  logger.debug(`📊 Parsed: status=${status}, roundId=${roundId?.substring(0, 30)}..., fixtures=${fixtures.length}, isPreview=${isPreview}`);
+  logger.info(`📊 Parsed: status=${status}, roundId=${roundId?.substring(0, 40)}..., fixtures=${fixtures.length} (from: ${fixtureSource}), isPreview=${isPreview}`);
+
+  // Log fixture ID fields for debugging
+  if (fixtures.length > 0) {
+    const f0 = fixtures[0];
+    logger.info(`📋 First fixture keys: [${Object.keys(f0).join(', ')}]`);
+    logger.info(`📋 First fixture IDs: id=${f0.id}, decisionId=${f0.decisionId}, listingDecisionId=${f0.listingDecisionId}`);
+  }
 
   return { status, roundId, fixtures, actions, stakeAmount, currentWindow, isPreview, raw: data };
 }
@@ -132,9 +177,9 @@ function parseRoundData(data) {
  */
 function getFixtureTeams(fixture) {
   return {
-    // decisionId (from round.decisions) is what the submit API actually expects.
-    // listingDecisionId (from preview.options) is only used as fallback.
-    id: fixture.decisionId || fixture.listingDecisionId || fixture.id || fixture.roundDecisionId,
+    // listingDecisionId (from preview.options) matches the previewId scope for submit.
+    // decisionId (from round.decisions) is fallback for legacy API.
+    id: fixture.listingDecisionId || fixture.decisionId || fixture.id || fixture.roundDecisionId,
     teamAId: fixture.assetAId || fixture.teamAId || fixture.optionA?.assetId || fixture.optionA?.id,
     teamBId: fixture.assetBId || fixture.teamBId || fixture.optionB?.assetId || fixture.optionB?.id,
     selectedTeamId: fixture.pickedAssetId || fixture.selectedAssetId || fixture.selectedTeamId || null,
@@ -183,28 +228,31 @@ function formatStatus(status) {
 
 /**
  * Main voting function — pure HTTP, no browser
+ * @param {object} account - Account context { id, sessionFile }
  */
-export async function performVote() {
+export async function performVote(account = {}) {
   const strategy = config.voteStrategy;
+  const sf = account.sessionFile || undefined;
+  const tag = account.id ? `[${account.id}] ` : '';
   logSeparator();
-  logger.info(`🗳️  Starting vote | Strategy: ${strategy}`);
+  logger.info(`${tag}🗳️  Starting vote | Strategy: ${strategy}`);
 
   try {
     // Step 1: Get current round
-    logger.info('📡 Fetching current round...');
-    let rawData = await getCurrentRound();
+    logger.info(`${tag}📡 Fetching current round...`);
+    let rawData = await getCurrentRound(sf);
     let parsed = parseRoundData(rawData);
 
     if (!parsed) {
       return { success: false, details: { error: 'Empty API response', strategy } };
     }
 
-    logger.info(`📊 Round status: ${formatStatus(parsed.status)}`);
-    logger.info(`📋 Fixtures: ${parsed.fixtures.length}`);
+    logger.info(`${tag}📊 Round status: ${formatStatus(parsed.status)}`);
+    logger.info(`${tag}📋 Fixtures: ${parsed.fixtures.length}`);
 
     // Step 2: Already submitted?
     if (['SUBMITTED', 'SETTLEMENT_PENDING', 'SETTLED'].includes(parsed.status)) {
-      logger.info('ℹ️  Already submitted for this round.');
+      logger.info(`${tag}ℹ️  Already submitted for this round.`);
       return {
         success: true,
         details: {
@@ -216,7 +264,7 @@ export async function performVote() {
 
     // Step 3: Calls not open yet?
     if (['CREATED', 'LOCK_PENDING'].includes(parsed.status)) {
-      logger.info('⏳ Allocation pending. Calls not open yet.');
+      logger.info(`${tag}⏳ Allocation pending. Calls not open yet.`);
       return {
         success: true,
         details: {
@@ -231,30 +279,30 @@ export async function performVote() {
       const startAction = parsed.actions?.startRound || parsed.actions?.prepareRound;
       if (startAction?.enabled === false) {
         const reason = startAction?.reason || 'Action not available';
-        logger.info(`⏳ Cannot start: ${reason}`);
+        logger.info(`${tag}⏳ Cannot start: ${reason}`);
         return {
           success: true,
           details: { asset: 'N/A', strategy, round: 'N/A', note: `Cannot start: ${reason}` },
         };
       }
 
-      logger.info('🚀 Opening listing calls...');
-      const startResult = await startRound();
+      logger.info(`${tag}🚀 Opening listing calls...`);
+      const startResult = await startRound(sf);
       const startParsed = parseRoundData(startResult);
-      logger.info(`✅ New round: ${formatStatus(startParsed?.status)}`);
+      logger.info(`${tag}✅ New round: ${formatStatus(startParsed?.status)}`);
 
       if (startParsed?.status === 'LOCKED' && startParsed.fixtures.length > 0) {
         // Wait for stake lock to complete before submitting
-        logger.info('⏳ Waiting 5s for stake lock...');
+        logger.info(`${tag}⏳ Waiting 5s for stake lock...`);
         await sleep(5000);
 
-        // Re-fetch fresh data after the wait (stake might have finalized)
-        logger.info('📡 Re-fetching fresh round data...');
-        rawData = await getCurrentRound();
+        // Re-fetch fresh data after the wait
+        logger.info(`${tag}📡 Re-fetching fresh round data...`);
+        rawData = await getCurrentRound(sf);
         parsed = parseRoundData(rawData);
 
         if (parsed?.status === 'LOCKED' && parsed.fixtures.length > 0) {
-          return doVoting(parsed, strategy);
+          return doVoting(parsed, strategy, sf, tag);
         }
       }
 
@@ -270,16 +318,16 @@ export async function performVote() {
 
     // Step 5: LOCKED = selections are open!
     if (parsed.status === 'LOCKED') {
-      return doVoting(parsed, strategy);
+      return doVoting(parsed, strategy, sf, tag);
     }
 
     // Unknown status
-    logger.warn(`⚠️  Unknown status: ${parsed.status}`);
+    logger.warn(`${tag}⚠️  Unknown status: ${parsed.status}`);
     return { success: false, details: { error: `Unknown status: ${parsed.status}`, strategy } };
 
   } catch (err) {
     const isSessionError = err.message.includes('SESSION_EXPIRED');
-    logger.error(`${isSessionError ? '🔑' : '❌'} Vote failed: ${err.message}`);
+    logger.error(`${tag}${isSessionError ? '🔑' : '❌'} Vote failed: ${err.message}`);
     const details = { error: err.message, strategy, sessionExpired: isSessionError };
     logVote(false, details);
     return { success: false, details };
@@ -290,13 +338,13 @@ export async function performVote() {
  * Actually perform voting on open fixtures.
  * Includes retry logic for transient submit errors (STAKE_LOCK_FAILED, INVALID_PICK).
  */
-async function doVoting(parsed, strategy) {
+async function doVoting(parsed, strategy, sessionFile, tag = '') {
   const MAX_SUBMIT_RETRIES = 3;
 
   // Load assets for display (once)
   let assetMap = new Map();
   try {
-    const assets = await getAssets();
+    const assets = await getAssets(sessionFile);
     assetMap = new Map(assets.map((a) => [a.id || a.assetId, a]));
   } catch (err) {
     logger.debug(`Could not load assets: ${err.message}`);
@@ -335,9 +383,12 @@ async function doVoting(parsed, strategy) {
 
     // Submit picks
     logger.info(`📤 Submitting ${picks.length} picks (attempt ${submitAttempt}/${MAX_SUBMIT_RETRIES})...`);
+    logger.info(`📤 previewId: ${roundId}`);
+    logger.info(`📤 isPreview: ${isPreview}`);
+    logger.info(`📤 Pick IDs: ${picks.map(p => p.roundDecisionId?.substring(0, 40)).join(', ')}`);
 
     try {
-      const result = await submitPicks(roundId, picks, { isPreview });
+      const result = await submitPicks(roundId, picks, { isPreview }, sessionFile);
       const newParsed = parseRoundData(result);
       logger.info(`✅ Picks submitted! Status: ${formatStatus(newParsed?.status)}`);
 
@@ -376,7 +427,7 @@ async function doVoting(parsed, strategy) {
 
       // Re-fetch fresh round data to get updated preview/decisions
       try {
-        const freshData = await getCurrentRound();
+        const freshData = await getCurrentRound(sessionFile);
         const freshParsed = parseRoundData(freshData);
 
         if (freshParsed?.status === 'LOCKED' && freshParsed.fixtures.length > 0) {

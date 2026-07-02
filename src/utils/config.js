@@ -45,6 +45,11 @@ const config = {
   screenshotDir: path.join(ROOT, 'screenshots'),
   logDir: path.join(ROOT, 'logs'),
   sessionFile: path.join(ROOT, 'sessions', 'state.json'),
+
+  // Multi-account
+  accountsFile: path.join(ROOT, 'accounts.json'),
+  maxAccounts: parseInt(process.env.MAX_ACCOUNTS || '20', 10),
+  delayBetweenAccounts: parseInt(process.env.DELAY_BETWEEN_ACCOUNTS || '3000', 10),
 };
 
 /**

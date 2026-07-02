@@ -5,7 +5,6 @@ const TELEGRAM_API = 'https://api.telegram.org/bot';
 
 /**
  * Send a message via Telegram Bot API
- * Uses native fetch (Node.js 18+)
  * @param {string} text - Message text (supports Markdown)
  * @param {object} opts
  * @param {boolean} opts.silent - Send without notification sound
@@ -46,12 +45,20 @@ export async function sendTelegram(text, { silent = false } = {}) {
 }
 
 /**
- * Notify vote success
+ * Prefix a message with account label
  */
-export async function notifyVoteSuccess(details = {}) {
+function acctPrefix(accountId) {
+  return accountId ? `[${accountId}] ` : '';
+}
+
+/**
+ * Notify vote success (per-account)
+ */
+export async function notifyVoteSuccess(details = {}, accountId = null) {
   const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  const prefix = accountId ? `[${accountId}] ` : '';
   const msg = [
-    '✅ *VOTE BERHASIL*',
+    `✅ ${prefix}*VOTE BERHASIL*`,
     '',
     `🗳️ Asset: *${details.asset || 'N/A'}*`,
     `🎯 Strategy: \`${details.strategy || 'N/A'}\``,
@@ -64,12 +71,13 @@ export async function notifyVoteSuccess(details = {}) {
 }
 
 /**
- * Notify vote failed
+ * Notify vote failed (per-account)
  */
-export async function notifyVoteFailed(details = {}) {
+export async function notifyVoteFailed(details = {}, accountId = null) {
   const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  const prefix = accountId ? `[${accountId}] ` : '';
   const msg = [
-    '❌ *VOTE GAGAL*',
+    `❌ ${prefix}*VOTE GAGAL*`,
     '',
     `⚠️ Error: ${details.error || 'Unknown'}`,
     `🎯 Strategy: \`${details.strategy || 'N/A'}\``,
@@ -83,24 +91,27 @@ export async function notifyVoteFailed(details = {}) {
 }
 
 /**
- * Notify session expired
+ * Notify session expired (per-account)
  */
-export async function notifySessionExpired() {
+export async function notifySessionExpired(accountId = null) {
+  const prefix = accountId ? `[${accountId}] ` : '';
+  const format = accountId ? `${accountId} eyJ...` : 'eyJ...';
   const msg = [
-    '🔑 *SESSION EXPIRED*',
+    `🔑 ${prefix}*SESSION EXPIRED*`,
     '',
-    'Session login sudah expired.',
+    `Session login${accountId ? ` akun *${accountId}*` : ''} sudah expired.`,
     '',
     '*Cara update (langsung di sini):*',
     '1. Buka Chrome → login https://runway.edel.finance',
     '2. Tekan F12 → Network → Refresh halaman',
     '3. Klik request pertama → cari header Cookie',
     '4. Copy value cookie-nya',
-    '5. *Paste langsung di chat ini* ⬇️',
+    `5. *Paste di chat ini* dengan format:`,
+    `   \`${format}\``,
     '',
-    '💡 Bisa paste format:',
-    '• `edel_session=eyJ...;cookie2=xxx`',
-    '• atau JWT saja: `eyJhbGci...`',
+    '💡 Format cookie:',
+    `• \`${accountId || 'A1'} edel_session=eyJ...;cookie2=xxx\``,
+    `• \`${accountId || 'A1'} eyJhbGci...\``,
     '',
     '📱 Bot sedang menunggu cookie dari kamu...',
   ].join('\n');
@@ -109,29 +120,30 @@ export async function notifySessionExpired() {
 }
 
 /**
- * Notify bot started
+ * Notify bot started (multi-account)
  */
-export async function notifyBotStarted() {
+export async function notifyBotStarted(accountCount = 1) {
   const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
   const totalMin = config.voteIntervalMinutes + config.voteBufferMinutes;
   const msg = [
     '🤖 *BOT STARTED*',
     '',
+    `👥 Accounts: ${accountCount}`,
     `🎯 Strategy: \`${config.voteStrategy}\``,
     `📅 Interval: ${config.voteIntervalMinutes} min + ${config.voteBufferMinutes} min buffer = ${totalMin} min`,
-    `🔄 Retry: setiap ${config.retryIntervalMinutes} min (jika belum siap)`,
+    `🔄 Retry: setiap ${config.retryIntervalMinutes} min`,
     `🕐 Started: ${time}`,
     '',
-    'Bot akan vote otomatis dengan dynamic scheduling.',
+    'Bot akan vote otomatis semua akun dengan dynamic scheduling.',
   ].join('\n');
 
   return sendTelegram(msg);
 }
 
 /**
- * Notify next vote scheduled
+ * Notify next vote scheduled (per-account)
  */
-export async function notifyNextVote(nextTime) {
+export async function notifyNextVote(nextTime, accountId = null) {
   const nextStr = nextTime
     ? nextTime.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
     : 'Unknown';
@@ -140,8 +152,9 @@ export async function notifyNextVote(nextTime) {
   const diffMs = nextTime ? nextTime.getTime() - now.getTime() : 0;
   const diffMin = Math.round(diffMs / 60000);
 
+  const prefix = accountId ? `[${accountId}] ` : '';
   const msg = [
-    '⏰ *NEXT VOTE SCHEDULED*',
+    `⏰ ${prefix}*NEXT VOTE*`,
     '',
     `🕐 Vote selanjutnya: ${nextStr}`,
     `⏳ Dalam ${diffMin} menit`,
@@ -152,17 +165,49 @@ export async function notifyNextVote(nextTime) {
 }
 
 /**
- * Notify already voted
+ * Notify already voted (per-account)
  */
-export async function notifyAlreadyVoted(message) {
+export async function notifyAlreadyVoted(message, accountId = null) {
   const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  const prefix = accountId ? `[${accountId}] ` : '';
   const msg = [
-    'ℹ️ *SUDAH VOTED*',
+    `ℹ️ ${prefix}*SUDAH VOTED*`,
     '',
     `📝 Status: ${message || 'Already voted'}`,
     `🕐 Waktu cek: ${time}`,
     '',
     '⏰ Akan coba lagi di jadwal berikutnya.',
+  ].join('\n');
+
+  return sendTelegram(msg, { silent: true });
+}
+
+/**
+ * Notify all-accounts summary after a vote cycle
+ */
+export async function notifyVoteSummary(results) {
+  const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
+  const lines = results.map(r => {
+    const emoji = r.status === 'voted' ? '✅'
+      : r.status === 'already_voted' ? '✅'
+      : r.status === 'expired' ? '🔑'
+      : r.status === 'failed' ? '❌'
+      : '⏳';
+    const detail = r.status === 'voted' ? (r.asset || 'done')
+      : r.status === 'already_voted' ? 'already voted'
+      : r.status === 'expired' ? 'SESSION EXPIRED'
+      : r.status === 'failed' ? (r.error || 'error')
+      : 'waiting';
+    return `${emoji} *${r.accountId}*: ${detail}`;
+  });
+
+  const msg = [
+    '📊 *VOTE CYCLE SUMMARY*',
+    '',
+    ...lines,
+    '',
+    `🕐 Waktu: ${time}`,
   ].join('\n');
 
   return sendTelegram(msg, { silent: true });
@@ -176,4 +221,5 @@ export default {
   notifyBotStarted,
   notifyNextVote,
   notifyAlreadyVoted,
+  notifyVoteSummary,
 };
