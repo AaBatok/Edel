@@ -110,6 +110,18 @@ async function voteCycle() {
   for (let i = 0; i < accounts.length; i++) {
     const account = accounts[i];
 
+    // Skip accounts that already voted and don't need retry yet
+    if (account.nextVote && account.lastVoteStatus) {
+      const nextVoteTime = new Date(account.nextVote);
+      const now = new Date();
+      const alreadyDone = ['voted', 'already_voted'].includes(account.lastVoteStatus);
+      if (alreadyDone && nextVoteTime > now) {
+        logger.info(`[${account.id}] ⏭️ Skip — already voted, next at ${nextVoteTime.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' })}`);
+        results.push({ accountId: account.id, status: account.lastVoteStatus, details: { note: 'skipped' } });
+        continue;
+      }
+    }
+
     // Retry logic per account
     let lastResult = null;
     for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
@@ -182,10 +194,13 @@ async function voteCycle() {
     // Don't block — the cookie import listener runs in the background
   }
 
-  // Return worst status for scheduling
-  if (results.some(r => r.status === 'voted')) return 'voted';
-  if (results.some(r => r.status === 'already_voted')) return 'already_voted';
+  // Schedule next cycle based on EARLIEST nextVote among all accounts.
+  // If A1 failed (retry 5min) but A2-A7 succeeded (60min), schedule at 5min
+  // so A1 gets retried. Accounts that already succeeded will just skip.
+  if (results.some(r => r.status === 'failed')) return 'failed';
   if (results.some(r => r.status === 'waiting')) return 'waiting';
+  if (results.some(r => r.status === 'already_voted')) return 'already_voted';
+  if (results.some(r => r.status === 'voted')) return 'voted';
   return 'failed';
 }
 
