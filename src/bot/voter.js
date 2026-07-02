@@ -339,7 +339,7 @@ export async function performVote(account = {}) {
  * Includes retry logic for transient submit errors (STAKE_LOCK_FAILED, INVALID_PICK).
  */
 async function doVoting(parsed, strategy, sessionFile, tag = '') {
-  const MAX_SUBMIT_RETRIES = 3;
+  const MAX_SUBMIT_RETRIES = 5;
 
   // Load assets for display (once)
   let assetMap = new Map();
@@ -350,47 +350,46 @@ async function doVoting(parsed, strategy, sessionFile, tag = '') {
     logger.debug(`Could not load assets: ${err.message}`);
   }
 
+  // Build picks ONCE from initial data
+  const { roundId, fixtures, isPreview } = parsed;
+  logger.info(`${tag}✅ Calls are OPEN! ${fixtures.length} head-to-head fixtures`);
+
+  const picks = [];
+  for (let i = 0; i < fixtures.length; i++) {
+    const fixture = fixtures[i];
+    const { id, teamAId, teamBId, selectedTeamId } = getFixtureTeams(fixture);
+
+    if (!teamAId || !teamBId) {
+      logger.debug(`   ${i + 1}. Skipping (missing teams): ${JSON.stringify(fixture).substring(0, 150)}`);
+      continue;
+    }
+
+    if (selectedTeamId) {
+      const selected = assetMap.get(selectedTeamId);
+      logger.info(`   ${i + 1}. Already picked: ${selected?.ticker || selectedTeamId}`);
+      picks.push({ roundDecisionId: id, assetId: selectedTeamId });
+      continue;
+    }
+
+    const selectedId = selectTeam(teamAId, teamBId, assetMap, strategy);
+    picks.push({ roundDecisionId: id, assetId: selectedId });
+  }
+
+  if (picks.length === 0) {
+    logger.warn(`${tag}⚠️  No picks to submit.`);
+    return { success: false, details: { error: 'No valid fixtures to pick', strategy } };
+  }
+
+  // Submit picks — retry with SAME payload on STAKE_LOCK_FAILED
   for (let submitAttempt = 1; submitAttempt <= MAX_SUBMIT_RETRIES; submitAttempt++) {
-    const { roundId, fixtures, isPreview } = parsed;
-    logger.info(`✅ Calls are OPEN! ${fixtures.length} head-to-head fixtures`);
-
-    // Make selections for each fixture
-    const picks = [];
-    for (let i = 0; i < fixtures.length; i++) {
-      const fixture = fixtures[i];
-      const { id, teamAId, teamBId, selectedTeamId } = getFixtureTeams(fixture);
-
-      if (!teamAId || !teamBId) {
-        logger.debug(`   ${i + 1}. Skipping (missing teams): ${JSON.stringify(fixture).substring(0, 150)}`);
-        continue;
-      }
-
-      if (selectedTeamId) {
-        const selected = assetMap.get(selectedTeamId);
-        logger.info(`   ${i + 1}. Already picked: ${selected?.ticker || selectedTeamId}`);
-        picks.push({ roundDecisionId: id, assetId: selectedTeamId });
-        continue;
-      }
-
-      const selectedId = selectTeam(teamAId, teamBId, assetMap, strategy);
-      picks.push({ roundDecisionId: id, assetId: selectedId });
-    }
-
-    if (picks.length === 0) {
-      logger.warn('⚠️  No picks to submit.');
-      return { success: false, details: { error: 'No valid fixtures to pick', strategy } };
-    }
-
-    // Submit picks
-    logger.info(`📤 Submitting ${picks.length} picks (attempt ${submitAttempt}/${MAX_SUBMIT_RETRIES})...`);
-    logger.info(`📤 previewId: ${roundId}`);
-    logger.info(`📤 isPreview: ${isPreview}`);
-    logger.info(`📤 Pick IDs: ${picks.map(p => p.roundDecisionId?.substring(0, 40)).join(', ')}`);
+    logger.info(`${tag}📤 Submitting ${picks.length} picks (attempt ${submitAttempt}/${MAX_SUBMIT_RETRIES})...`);
+    logger.info(`${tag}📤 previewId: ${roundId}`);
+    logger.info(`${tag}📤 isPreview: ${isPreview}`);
 
     try {
       const result = await submitPicks(roundId, picks, { isPreview }, sessionFile);
       const newParsed = parseRoundData(result);
-      logger.info(`✅ Picks submitted! Status: ${formatStatus(newParsed?.status)}`);
+      logger.info(`${tag}✅ Picks submitted! Status: ${formatStatus(newParsed?.status)}`);
 
       const pickedAssets = picks
         .map((p) => assetMap.get(p.assetId)?.ticker || 'unknown')
@@ -408,10 +407,10 @@ async function doVoting(parsed, strategy, sessionFile, tag = '') {
 
     } catch (submitErr) {
       const errMsg = submitErr.message;
-      logger.warn(`⚠️  Submit attempt ${submitAttempt} failed: ${errMsg.substring(0, 200)}`);
+      logger.warn(`${tag}⚠️  Submit attempt ${submitAttempt} failed: ${errMsg.substring(0, 200)}`);
 
-      const isRetryable = errMsg.includes('STAKE_LOCK_FAILED')
-        || errMsg.includes('INVALID_PICK')
+      const isStakeLock = errMsg.includes('STAKE_LOCK_FAILED');
+      const isRetryable = isStakeLock
         || errMsg.includes('502')
         || errMsg.includes('503')
         || errMsg.includes('504');
@@ -420,28 +419,11 @@ async function doVoting(parsed, strategy, sessionFile, tag = '') {
         throw submitErr; // Let outer catch handle it
       }
 
-      // Wait longer for STAKE_LOCK_FAILED (stake needs time)
-      const waitSec = errMsg.includes('STAKE_LOCK_FAILED') ? 8 : 5;
-      logger.info(`⏳ Waiting ${waitSec}s then re-fetching fresh data...`);
+      // STAKE_LOCK_FAILED: just wait and retry SAME payload.
+      // DO NOT re-fetch! Re-fetching changes data and causes INVALID_PICK.
+      const waitSec = isStakeLock ? 10 : 5;
+      logger.info(`${tag}⏳ Waiting ${waitSec}s before retry (same payload)...`);
       await sleep(waitSec * 1000);
-
-      // Re-fetch fresh round data to get updated preview/decisions
-      try {
-        const freshData = await getCurrentRound(sessionFile);
-        const freshParsed = parseRoundData(freshData);
-
-        if (freshParsed?.status === 'LOCKED' && freshParsed.fixtures.length > 0) {
-          parsed = freshParsed; // Use fresh data for next attempt
-          logger.info(`🔄 Got fresh data: ${freshParsed.fixtures.length} fixtures`);
-        } else {
-          logger.warn(`⚠️  Fresh data not ready: status=${formatStatus(freshParsed?.status)}, fixtures=${freshParsed?.fixtures?.length}`);
-          throw submitErr;
-        }
-      } catch (fetchErr) {
-        if (fetchErr === submitErr) throw submitErr;
-        logger.warn(`⚠️  Re-fetch failed: ${fetchErr.message}`);
-        throw submitErr;
-      }
     }
   }
 
