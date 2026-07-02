@@ -39,6 +39,31 @@ function getNextDelay(result) {
 }
 
 /**
+ * Find the earliest nextVote time among all enabled accounts.
+ * Returns delay in ms from now. Minimum 30 seconds.
+ */
+function getEarliestNextVoteDelay() {
+  const accounts = getEnabledAccounts();
+  const now = Date.now();
+  let earliest = Infinity;
+
+  for (const acct of accounts) {
+    if (acct.nextVote) {
+      const t = new Date(acct.nextVote).getTime();
+      if (t < earliest) earliest = t;
+    }
+  }
+
+  if (earliest === Infinity) {
+    // No nextVote set, use retry interval
+    return config.retryIntervalMinutes * 60 * 1000;
+  }
+
+  const delay = earliest - now;
+  return Math.max(delay, 30 * 1000); // minimum 30s
+}
+
+/**
  * Vote for a single account.
  * Returns: { accountId, status, details }
  */
@@ -194,9 +219,7 @@ async function voteCycle() {
     // Don't block — the cookie import listener runs in the background
   }
 
-  // Schedule next cycle based on EARLIEST nextVote among all accounts.
-  // If A1 failed (retry 5min) but A2-A7 succeeded (60min), schedule at 5min
-  // so A1 gets retried. Accounts that already succeeded will just skip.
+  // Return is kept for backwards compat but scheduling now uses per-account nextVote
   if (results.some(r => r.status === 'failed')) return 'failed';
   if (results.some(r => r.status === 'waiting')) return 'waiting';
   if (results.some(r => r.status === 'already_voted')) return 'already_voted';
@@ -222,7 +245,8 @@ function scheduleNextVote(delayMs) {
   nextVoteTimer = setTimeout(async () => {
     try {
       const result = await voteCycle();
-      const nextDelay = getNextDelay(result);
+      // Schedule based on EARLIEST per-account nextVote
+      const nextDelay = getEarliestNextVoteDelay();
       scheduleNextVote(nextDelay);
     } catch (err) {
       logger.error(`Scheduled vote cycle error: ${err.message}`);
@@ -267,8 +291,8 @@ export async function startScheduler() {
   logger.info('▶️  Running initial vote cycle...');
   const result = await voteCycle();
 
-  // Schedule next vote
-  const nextDelay = getNextDelay(result);
+  // Schedule next vote based on EARLIEST per-account nextVote
+  const nextDelay = getEarliestNextVoteDelay();
   scheduleNextVote(nextDelay);
 
   logger.info('');
