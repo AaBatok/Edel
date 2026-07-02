@@ -134,10 +134,9 @@ async function voteCycle() {
 function getNextDelay(result) {
   switch (result) {
     case 'voted':
-      return (config.voteIntervalMinutes + config.voteBufferMinutes) * 60 * 1000;
     case 'already_voted':
+      return (config.voteIntervalMinutes + config.voteBufferMinutes) * 60 * 1000;
     case 'waiting':
-      return config.retryIntervalMinutes * 60 * 1000;
     case 'failed':
     default:
       return config.retryIntervalMinutes * 60 * 1000;
