@@ -76,20 +76,25 @@ function parseRoundData(data) {
     roundId = data.roundId || data.id || findKey(data, 'roundId');
   }
 
-  // ── Find fixtures/decisions from ALL possible locations ──
+  // ── Find fixtures/decisions ──
+  // IMPORTANT: round.decisions MUST come before preview.options!
+  // The submit API expects decisionId from round.decisions, NOT
+  // listingDecisionId from preview.options (they are different values).
   const candidateArrays = [
-    data.preview?.options,
-    data.options,
-    data.decisions,
-    data.fixtures,
-    data.listingDecisions,
+    // Round decisions (highest priority — has correct decisionId for submit)
     data.round?.decisions,
     data.round?.fixtures,
     data.round?.options,
     data.round?.round?.decisions,
     data.round?.round?.fixtures,
+    // Preview options (fallback when round has no decisions yet)
+    data.preview?.options,
     data.preview?.decisions,
     data.preview?.fixtures,
+    // Top-level
+    data.decisions,
+    data.fixtures,
+    data.options,
     data.currentWindow?.decisions,
     data.currentWindow?.fixtures,
   ];
@@ -127,10 +132,12 @@ function parseRoundData(data) {
  */
 function getFixtureTeams(fixture) {
   return {
-    id: fixture.listingDecisionId || fixture.id || fixture.roundDecisionId,
+    // decisionId (from round.decisions) is what the submit API actually expects.
+    // listingDecisionId (from preview.options) is only used as fallback.
+    id: fixture.decisionId || fixture.listingDecisionId || fixture.id || fixture.roundDecisionId,
     teamAId: fixture.assetAId || fixture.teamAId || fixture.optionA?.assetId || fixture.optionA?.id,
     teamBId: fixture.assetBId || fixture.teamBId || fixture.optionB?.assetId || fixture.optionB?.id,
-    selectedTeamId: fixture.selectedAssetId || fixture.selectedTeamId || null,
+    selectedTeamId: fixture.pickedAssetId || fixture.selectedAssetId || fixture.selectedTeamId || null,
   };
 }
 
