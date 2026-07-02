@@ -79,18 +79,12 @@ async function voteForAccount(account) {
       return { accountId, status: 'expired', details: result.details };
     }
 
-    await notifyVoteFailed({ ...result.details, attempt: 1, maxAttempts: 1, willRetry: false }, accountId);
+    // Don't notify here — let the retry loop in voteCycle handle final notification
     return { accountId, status: 'failed', details: result.details };
 
   } catch (err) {
     logger.error(`[${accountId}] 💥 Crashed: ${err.message}`);
-    await notifyVoteFailed({
-      error: err.message,
-      strategy: config.voteStrategy,
-      attempt: 1,
-      maxAttempts: 1,
-      willRetry: false,
-    }, accountId);
+    // Don't notify here — let the retry loop in voteCycle handle final notification
     return { accountId, status: 'failed', details: { error: err.message } };
   }
 }
@@ -134,6 +128,13 @@ async function voteCycle() {
       // Only retry on 'failed'
       if (attempt >= config.maxRetries) {
         logger.error(`[${account.id}] ❌ All ${config.maxRetries} attempts failed.`);
+        // Send ONE failure notification after all retries exhausted
+        await notifyVoteFailed({
+          ...lastResult.details,
+          attempt: config.maxRetries,
+          maxAttempts: config.maxRetries,
+          willRetry: false,
+        }, account.id);
       }
     }
 
