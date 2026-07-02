@@ -104,6 +104,10 @@ async function apiGet(path, sessionFile) {
  * @param {string} [sessionFile] - Optional session file path
  */
 async function apiPost(path, body = {}, sessionFile) {
+  // Log the full request body for submit debugging
+  if (path.includes('submit')) {
+    logger.info(`📤 POST ${path} body: ${JSON.stringify(body)}`);
+  }
   const res = await apiFetch(path, {
     method: 'POST',
     body: JSON.stringify(body),
