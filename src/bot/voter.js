@@ -394,6 +394,10 @@ export async function performVote(account = {}) {
         };
       }
 
+      // Wait 10s before starting to let server prepare
+      logger.info(`${tag}⏳ Waiting 10s before opening listing calls...`);
+      await sleep(10000);
+
       logger.info(`${tag}🚀 Opening listing calls...`);
       const startResult = await startRound(sf);
       const startParsed = parseRoundData(startResult);

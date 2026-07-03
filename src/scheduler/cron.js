@@ -255,10 +255,11 @@ async function voteCycle() {
     }
   }
 
-  // Send summary ONLY if at least one account actually voted or failed
-  // Don't spam summary when all accounts are just skipped/waiting/already_voted
+  // Send summary ONLY if at least one account ACTUALLY ran and voted/failed this cycle
+  // Exclude skipped accounts (they carry old status like 'voted' from previous cycle)
   const hasRealActivity = results.some(r =>
-    r.status === 'voted' || r.status === 'failed' || r.status === 'expired'
+    r.details?.note !== 'skipped'
+    && (r.status === 'voted' || r.status === 'failed' || r.status === 'expired')
   );
   if (results.length > 1 && hasRealActivity) {
     await notifyVoteSummary(results.map(r => ({
