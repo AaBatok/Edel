@@ -405,8 +405,8 @@ export async function performVote(account = {}) {
 
       if (startParsed?.status === 'LOCKED' && startParsed.fixtures.length > 0) {
         // Wait for stake lock to complete before submitting
-        logger.info(`${tag}⏳ Waiting 5s for stake lock...`);
-        await sleep(5000);
+        logger.info(`${tag}⏳ Waiting 30s for stake lock...`);
+        await sleep(30000);
 
         // Re-fetch fresh data after the wait
         logger.info(`${tag}📡 Re-fetching fresh round data...`);
