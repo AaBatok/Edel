@@ -23,6 +23,59 @@ const sessionExpiredNotified = new Set();
 // Track active timer for graceful shutdown
 let nextVoteTimer = null;
 
+// Cookie import queue: import cookies instantly, vote after 30s cooldown
+let cookieVoteQueue = [];
+let cookieVoteTimer = null;
+
+/**
+ * Process queued accounts after cookie import cooldown.
+ * Runs votes for all queued accounts sequentially.
+ */
+async function processCookieVoteQueue() {
+  cookieVoteTimer = null;
+  if (cookieVoteQueue.length === 0) return;
+
+  const accountIds = [...cookieVoteQueue];
+  cookieVoteQueue = [];
+
+  logger.info(`🍪 Cookie cooldown selesai. Voting ${accountIds.length} akun: ${accountIds.join(', ')}`);
+  await sendTelegram([
+    `▶️ *MULAI VOTE*`,
+    '',
+    `🍪 ${accountIds.length} akun: ${accountIds.join(', ')}`,
+  ].join('\n'));
+
+  const { getAccount } = await import('../accounts/manager.js');
+
+  for (const accountId of accountIds) {
+    const account = getAccount(accountId);
+    if (!account) continue;
+
+    try {
+      const result = await voteForAccount(account);
+      const nextDelay = getNextDelay(result.status);
+      const nextVoteTime = new Date(Date.now() + nextDelay);
+
+      updateAccountDb(accountId, {
+        lastVote: new Date().toISOString(),
+        lastVoteStatus: result.status,
+        nextVote: nextVoteTime.toISOString(),
+      });
+
+      updateAccountStatus(accountId, {
+        status: result.status,
+        nextVote: nextVoteTime,
+      });
+    } catch (err) {
+      logger.error(`[${accountId}] Auto-retry failed: ${err.message}`);
+    }
+  }
+
+  // Reschedule next cycle based on updated account times
+  const nextDelay = getEarliestNextVoteDelay();
+  scheduleNextVote(nextDelay);
+}
+
 /**
  * Determine next delay (in ms) based on vote cycle result.
  */
@@ -410,7 +463,7 @@ function startCookieListener() {
           // ignore
         }
 
-        // Process each account entry
+        // Import cookies instantly (no voting yet)
         const imported = [];
         const failed = [];
 
@@ -429,53 +482,36 @@ function startCookieListener() {
 
           updateAccountSession(entry.id, cookies);
           sessionExpiredNotified.delete(entry.id);
-          logger.info(`🍪 [${entry.id}] Cookie diterima via Telegram!`);
+          logger.info(`🍪 [${entry.id}] Cookie imported!`);
           imported.push(entry.id);
+
+          // Add to vote queue (deduplicate)
+          if (!cookieVoteQueue.includes(entry.id)) {
+            cookieVoteQueue.push(entry.id);
+          }
         }
 
-        // Send summary notification
+        // Send import confirmation immediately
         const summaryLines = [];
         if (imported.length > 0) {
           summaryLines.push(`✅ *SESSION UPDATED*`);
           summaryLines.push('');
           summaryLines.push(`🍪 ${imported.length} akun: ${imported.join(', ')}`);
+          summaryLines.push('');
+          summaryLines.push(`⏳ Menunggu 30 detik untuk cookie lainnya...`);
+          summaryLines.push(`📋 Antrian vote: ${cookieVoteQueue.join(', ')}`);
         }
         if (failed.length > 0) {
           summaryLines.push('');
           summaryLines.push(`❌ Gagal: ${failed.join(', ')}`);
         }
-        if (imported.length > 0) {
-          summaryLines.push('');
-          summaryLines.push('▶️ Auto-retrying vote...');
-        }
         if (summaryLines.length > 0) {
           await sendTelegram(summaryLines.join('\n'));
         }
 
-        // Auto-retry vote for each imported account
-        for (const accountId of imported) {
-          const account = getAccount(accountId);
-          if (!account) continue;
-
-          try {
-            const result = await voteForAccount(account);
-            const nextDelay = getNextDelay(result.status);
-            const nextVoteTime = new Date(Date.now() + nextDelay);
-
-            updateAccountDb(accountId, {
-              lastVote: new Date().toISOString(),
-              lastVoteStatus: result.status,
-              nextVote: nextVoteTime.toISOString(),
-            });
-
-            updateAccountStatus(accountId, {
-              status: result.status,
-              nextVote: nextVoteTime,
-            });
-          } catch (err) {
-            logger.error(`[${accountId}] Auto-retry failed: ${err.message}`);
-          }
-        }
+        // Reset the 30s cooldown timer — vote starts after no new cookies for 30s
+        if (cookieVoteTimer) clearTimeout(cookieVoteTimer);
+        cookieVoteTimer = setTimeout(() => processCookieVoteQueue(), 30 * 1000);
       }
     } catch (err) {
       // ignore polling errors
