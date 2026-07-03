@@ -190,7 +190,7 @@ function getFixtureTeams(fixture) {
  * Select which team to pick for a fixture based on strategy
  * @param {Map} demandMap - Map of assetId → demand index score (for 'smart' strategy)
  */
-function selectTeam(teamAId, teamBId, assetMap, strategy, demandMap = new Map()) {
+function selectTeam(teamAId, teamBId, assetMap, strategy, demandMap = new Map(), rankInverted = false) {
   const a = assetMap.get(teamAId);
   const b = assetMap.get(teamBId);
 
@@ -200,14 +200,24 @@ function selectTeam(teamAId, teamBId, assetMap, strategy, demandMap = new Map())
     case 'second':
       return teamBId;
     case 'smart': {
-      // Smart strategy: pick asset with HIGHER demand index
+      // Smart strategy: pick asset with better demand index
       const scoreA = demandMap.get(teamAId) ?? demandMap.get(a?.ticker) ?? -1;
       const scoreB = demandMap.get(teamBId) ?? demandMap.get(b?.ticker) ?? -1;
 
       if (scoreA >= 0 || scoreB >= 0) {
-        const pick = scoreA >= scoreB ? teamAId : teamBId;
+        // If using rank: lower = better. Otherwise: higher = better.
+        let pick;
+        if (rankInverted) {
+          // Lower rank is better (rank 1 > rank 10)
+          const effA = scoreA < 0 ? Infinity : scoreA;
+          const effB = scoreB < 0 ? Infinity : scoreB;
+          pick = effA <= effB ? teamAId : teamBId;
+        } else {
+          pick = scoreA >= scoreB ? teamAId : teamBId;
+        }
         const picked = assetMap.get(pick);
-        logger.info(`   📊 ${a?.ticker || 'A'}(${scoreA.toFixed?.(2) ?? '?'}) vs ${b?.ticker || 'B'}(${scoreB.toFixed?.(2) ?? '?'}) → ${picked?.ticker || pick} (demand index)`);
+        const label = rankInverted ? 'rank' : 'score';
+        logger.info(`   📊 ${a?.ticker || 'A'}(${label}:${scoreA}) vs ${b?.ticker || 'B'}(${label}:${scoreB}) → ${picked?.ticker || pick} (demand index)`);
         return pick;
       }
 
@@ -285,10 +295,11 @@ async function loadDemandIndex(sessionFile, tag = '') {
       }
     }
 
-    logger.info(`${tag}📊 Using score field: "${scoreField || 'NONE'}"`);
+    logger.info(`${tag}📊 Using score field: "${scoreField || 'NONE'}" (${scoreField === 'rank' ? 'lower=better' : 'higher=better'})`);
 
     // Build map: assetId → score AND ticker → score
     const demandMap = new Map();
+    const isRank = (scoreField === 'rank');
     for (const item of items) {
       const id = item.assetId || item.id || item.asset_id;
       const ticker = item.ticker || item.symbol || item.name;
@@ -299,10 +310,10 @@ async function loadDemandIndex(sessionFile, tag = '') {
     }
 
     logger.info(`${tag}📊 Demand Index loaded: ${demandMap.size} entries`);
-    return demandMap;
+    return { map: demandMap, inverted: isRank };
   } catch (err) {
     logger.warn(`${tag}⚠️ Could not load Demand Index: ${err.message}`);
-    return new Map();
+    return { map: new Map(), inverted: false };
   }
 }
 
@@ -449,8 +460,11 @@ async function doVoting(parsed, strategy, sessionFile, tag = '') {
 
   // Load demand index for 'smart' strategy
   let demandMap = new Map();
+  let rankInverted = false;
   if (strategy === 'smart') {
-    demandMap = await loadDemandIndex(sessionFile, tag);
+    const demandResult = await loadDemandIndex(sessionFile, tag);
+    demandMap = demandResult.map;
+    rankInverted = demandResult.inverted;
   }
 
   /**
@@ -475,7 +489,7 @@ async function doVoting(parsed, strategy, sessionFile, tag = '') {
         continue;
       }
 
-      const selectedId = selectTeam(teamAId, teamBId, assetMap, strategy, demandMap);
+      const selectedId = selectTeam(teamAId, teamBId, assetMap, strategy, demandMap, rankInverted);
       newPicks.push({ roundDecisionId: id, assetId: selectedId });
     }
     return newPicks;

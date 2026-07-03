@@ -133,10 +133,10 @@ async function voteForAccount(account) {
     if (result.success) {
       // Determine status type
       if (result.details?.note?.includes('Already submitted')) {
-        await notifyAlreadyVoted(result.details.note, accountId);
+        // Don't notify Telegram for 'already voted' — avoids spam on retries
         return { accountId, status: 'already_voted', details: result.details };
       } else if (result.details?.note) {
-        await notifyAlreadyVoted(result.details.note, accountId);
+        // Don't notify Telegram for 'waiting' status
         return { accountId, status: 'waiting', details: result.details };
       } else {
         await notifyVoteSuccess(result.details, accountId);
@@ -255,8 +255,12 @@ async function voteCycle() {
     }
   }
 
-  // Send summary if multiple accounts
-  if (results.length > 1) {
+  // Send summary ONLY if at least one account actually voted or failed
+  // Don't spam summary when all accounts are just skipped/waiting/already_voted
+  const hasRealActivity = results.some(r =>
+    r.status === 'voted' || r.status === 'failed' || r.status === 'expired'
+  );
+  if (results.length > 1 && hasRealActivity) {
     await notifyVoteSummary(results.map(r => ({
       accountId: r.accountId,
       status: r.status,
