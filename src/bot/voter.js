@@ -13,7 +13,7 @@
  */
 import config from '../utils/config.js';
 import logger, { logVote, logSeparator } from '../utils/logger.js';
-import { getCurrentRound, startRound, submitPicks, getAssets } from '../api/client.js';
+import { getCurrentRound, startRound, submitPicks, getAssets, getDemandIndex } from '../api/client.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -188,8 +188,9 @@ function getFixtureTeams(fixture) {
 
 /**
  * Select which team to pick for a fixture based on strategy
+ * @param {Map} demandMap - Map of assetId → demand index score (for 'smart' strategy)
  */
-function selectTeam(teamAId, teamBId, assetMap, strategy) {
+function selectTeam(teamAId, teamBId, assetMap, strategy, demandMap = new Map()) {
   const a = assetMap.get(teamAId);
   const b = assetMap.get(teamBId);
 
@@ -198,7 +199,23 @@ function selectTeam(teamAId, teamBId, assetMap, strategy) {
       return teamAId;
     case 'second':
       return teamBId;
-    case 'smart':
+    case 'smart': {
+      // Smart strategy: pick asset with HIGHER demand index
+      const scoreA = demandMap.get(teamAId) ?? demandMap.get(a?.ticker) ?? -1;
+      const scoreB = demandMap.get(teamBId) ?? demandMap.get(b?.ticker) ?? -1;
+
+      if (scoreA >= 0 || scoreB >= 0) {
+        const pick = scoreA >= scoreB ? teamAId : teamBId;
+        const picked = assetMap.get(pick);
+        logger.info(`   📊 ${a?.ticker || 'A'}(${scoreA.toFixed?.(2) ?? '?'}) vs ${b?.ticker || 'B'}(${scoreB.toFixed?.(2) ?? '?'}) → ${picked?.ticker || pick} (demand index)`);
+        return pick;
+      }
+
+      // Fallback to random if no demand data
+      const fallback = Math.random() < 0.5 ? teamAId : teamBId;
+      logger.info(`   🎲 ${a?.ticker || 'A'} vs ${b?.ticker || 'B'} → ${assetMap.get(fallback)?.ticker || fallback} (random fallback, no demand data)`);
+      return fallback;
+    }
     case 'random':
     default: {
       const pick = Math.random() < 0.5 ? teamAId : teamBId;
@@ -206,6 +223,86 @@ function selectTeam(teamAId, teamBId, assetMap, strategy) {
       logger.info(`   🎯 ${a?.ticker || 'A'} vs ${b?.ticker || 'B'} → ${picked?.ticker || pick}`);
       return pick;
     }
+  }
+}
+
+/**
+ * Load demand index data and build a score map.
+ * Returns Map<assetId|ticker, score>
+ */
+async function loadDemandIndex(sessionFile, tag = '') {
+  try {
+    const data = await getDemandIndex(sessionFile);
+    logger.info(`${tag}📊 Demand Index response keys: ${JSON.stringify(Object.keys(data || {}))}`);
+
+    // Auto-detect the array of assets from response
+    let items = null;
+    if (Array.isArray(data)) {
+      items = data;
+    } else if (data?.assets && Array.isArray(data.assets)) {
+      items = data.assets;
+    } else if (data?.data && Array.isArray(data.data)) {
+      items = data.data;
+    } else if (data?.rankings && Array.isArray(data.rankings)) {
+      items = data.rankings;
+    } else {
+      // Try to find any array in the response
+      for (const val of Object.values(data || {})) {
+        if (Array.isArray(val) && val.length > 0) {
+          items = val;
+          break;
+        }
+      }
+    }
+
+    if (!items || items.length === 0) {
+      logger.warn(`${tag}⚠️ Demand Index: no items found in response`);
+      logger.debug(`${tag}📊 Full response: ${JSON.stringify(data).substring(0, 500)}`);
+      return new Map();
+    }
+
+    // Log first item to understand structure
+    logger.info(`${tag}📊 Demand Index: ${items.length} assets, sample: ${JSON.stringify(items[0]).substring(0, 200)}`);
+
+    // Auto-detect score field
+    const scoreFields = ['demandIndex', 'score', 'index', 'value', 'rank', 'rating', 'weight', 'demand'];
+    const sample = items[0];
+    let scoreField = null;
+    for (const f of scoreFields) {
+      if (sample[f] !== undefined && typeof sample[f] === 'number') {
+        scoreField = f;
+        break;
+      }
+    }
+
+    if (!scoreField) {
+      // Try to find any numeric field
+      for (const [k, v] of Object.entries(sample)) {
+        if (typeof v === 'number' && !['id', 'rank'].includes(k)) {
+          scoreField = k;
+          break;
+        }
+      }
+    }
+
+    logger.info(`${tag}📊 Using score field: "${scoreField || 'NONE'}"`);
+
+    // Build map: assetId → score AND ticker → score
+    const demandMap = new Map();
+    for (const item of items) {
+      const id = item.assetId || item.id || item.asset_id;
+      const ticker = item.ticker || item.symbol || item.name;
+      const score = scoreField ? (item[scoreField] ?? 0) : 0;
+
+      if (id) demandMap.set(id, score);
+      if (ticker) demandMap.set(ticker, score);
+    }
+
+    logger.info(`${tag}📊 Demand Index loaded: ${demandMap.size} entries`);
+    return demandMap;
+  } catch (err) {
+    logger.warn(`${tag}⚠️ Could not load Demand Index: ${err.message}`);
+    return new Map();
   }
 }
 
@@ -350,6 +447,12 @@ async function doVoting(parsed, strategy, sessionFile, tag = '') {
     logger.debug(`Could not load assets: ${err.message}`);
   }
 
+  // Load demand index for 'smart' strategy
+  let demandMap = new Map();
+  if (strategy === 'smart') {
+    demandMap = await loadDemandIndex(sessionFile, tag);
+  }
+
   /**
    * Build picks from parsed round data
    */
@@ -372,7 +475,7 @@ async function doVoting(parsed, strategy, sessionFile, tag = '') {
         continue;
       }
 
-      const selectedId = selectTeam(teamAId, teamBId, assetMap, strategy);
+      const selectedId = selectTeam(teamAId, teamBId, assetMap, strategy, demandMap);
       newPicks.push({ roundDecisionId: id, assetId: selectedId });
     }
     return newPicks;
