@@ -364,40 +364,42 @@ function startCookieListener() {
 
         const text = msg.text.trim();
 
-        // Parse multi-account format: "A1 eyJ..." or "A3 edel_session=eyJ..."
-        const match = text.match(/^(A\d+)\s+(.+)$/i);
-        if (!match) continue;
-
-        const accountId = match[1].toUpperCase();
-        const cookieData = match[2].trim();
-
-        // Parse the cookie
-        const cookies = parseCookieInput(cookieData);
-        if (!cookies) continue;
-
-        // Use account manager (already imported at top)
+        // Parse cookie entries: supports single "A1 cookie" or bulk:
+        // "A2\ncookie\nA3\ncookie\n..."  or  "A2 cookie\nA3 cookie\n..."
         const { updateAccountSession, getAccount } = await import('../accounts/manager.js');
-        const account = getAccount(accountId);
 
-        if (!account) {
-          await sendTelegram(`❌ Akun *${accountId}* tidak ditemukan. Cek /list.`);
-          continue;
+        // Split by account label pattern to find all entries
+        const entries = [];
+        const lines = text.split(/\n/);
+        let currentId = null;
+        let currentCookie = '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          // Check if line starts with account ID (e.g. "A1" or "A1 cookie...")
+          const idMatch = trimmed.match(/^(A\d+)\s*(.*)/i);
+          if (idMatch) {
+            // Save previous entry
+            if (currentId && currentCookie.trim()) {
+              entries.push({ id: currentId, cookie: currentCookie.trim() });
+            }
+            currentId = idMatch[1].toUpperCase();
+            currentCookie = idMatch[2] || ''; // rest of line after ID (if any)
+          } else if (currentId) {
+            // Continuation of cookie data for current account
+            currentCookie += (currentCookie ? '; ' : '') + trimmed;
+          }
+        }
+        // Don't forget the last entry
+        if (currentId && currentCookie.trim()) {
+          entries.push({ id: currentId, cookie: currentCookie.trim() });
         }
 
-        updateAccountSession(accountId, cookies);
-        sessionExpiredNotified.delete(accountId);
+        if (entries.length === 0) continue;
 
-        logger.info(`🍪 [${accountId}] Cookie diterima via Telegram!`);
-
-        await sendTelegram([
-          `✅ *SESSION UPDATED* [${accountId}]`,
-          '',
-          `🍪 ${cookies.length} cookies imported`,
-          '',
-          '▶️ Auto-retrying vote...',
-        ].join('\n'));
-
-        // Delete cookie message for security
+        // Delete cookie message for security (once, before processing)
         try {
           await fetch(`${TELEGRAM_API}${telegramBotToken}/deleteMessage`, {
             method: 'POST',
@@ -408,24 +410,71 @@ function startCookieListener() {
           // ignore
         }
 
-        // Auto-retry vote for this account
-        try {
-          const result = await voteForAccount(account);
-          const nextDelay = getNextDelay(result.status);
-          const nextVoteTime = new Date(Date.now() + nextDelay);
+        // Process each account entry
+        const imported = [];
+        const failed = [];
 
-          updateAccountDb(accountId, {
-            lastVote: new Date().toISOString(),
-            lastVoteStatus: result.status,
-            nextVote: nextVoteTime.toISOString(),
-          });
+        for (const entry of entries) {
+          const cookies = parseCookieInput(entry.cookie);
+          if (!cookies) {
+            failed.push(`${entry.id}: format cookie salah`);
+            continue;
+          }
 
-          updateAccountStatus(accountId, {
-            status: result.status,
-            nextVote: nextVoteTime,
-          });
-        } catch (err) {
-          logger.error(`[${accountId}] Auto-retry failed: ${err.message}`);
+          const account = getAccount(entry.id);
+          if (!account) {
+            failed.push(`${entry.id}: akun tidak ditemukan`);
+            continue;
+          }
+
+          updateAccountSession(entry.id, cookies);
+          sessionExpiredNotified.delete(entry.id);
+          logger.info(`🍪 [${entry.id}] Cookie diterima via Telegram!`);
+          imported.push(entry.id);
+        }
+
+        // Send summary notification
+        const summaryLines = [];
+        if (imported.length > 0) {
+          summaryLines.push(`✅ *SESSION UPDATED*`);
+          summaryLines.push('');
+          summaryLines.push(`🍪 ${imported.length} akun: ${imported.join(', ')}`);
+        }
+        if (failed.length > 0) {
+          summaryLines.push('');
+          summaryLines.push(`❌ Gagal: ${failed.join(', ')}`);
+        }
+        if (imported.length > 0) {
+          summaryLines.push('');
+          summaryLines.push('▶️ Auto-retrying vote...');
+        }
+        if (summaryLines.length > 0) {
+          await sendTelegram(summaryLines.join('\n'));
+        }
+
+        // Auto-retry vote for each imported account
+        for (const accountId of imported) {
+          const account = getAccount(accountId);
+          if (!account) continue;
+
+          try {
+            const result = await voteForAccount(account);
+            const nextDelay = getNextDelay(result.status);
+            const nextVoteTime = new Date(Date.now() + nextDelay);
+
+            updateAccountDb(accountId, {
+              lastVote: new Date().toISOString(),
+              lastVoteStatus: result.status,
+              nextVote: nextVoteTime.toISOString(),
+            });
+
+            updateAccountStatus(accountId, {
+              status: result.status,
+              nextVote: nextVoteTime,
+            });
+          } catch (err) {
+            logger.error(`[${accountId}] Auto-retry failed: ${err.message}`);
+          }
         }
       }
     } catch (err) {
