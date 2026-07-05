@@ -54,10 +54,28 @@ async function processCookieVoteQueue() {
     try {
       const result = await voteForAccount(account);
       const nextDelay = getNextDelay(result.status);
-      const nextVoteTime = new Date(Date.now() + nextDelay);
+
+      // For 'already_voted', calculate nextVote from the ORIGINAL lastVote time,
+      // not from now. This preserves the correct vote schedule after cookie import.
+      let baseTime = Date.now();
+      let newLastVote = new Date().toISOString();
+
+      if (result.status === 'already_voted' && account.lastVote) {
+        baseTime = new Date(account.lastVote).getTime();
+        newLastVote = account.lastVote; // preserve original lastVote
+        logger.info(`[${accountId}] 📅 Keeping original lastVote: ${account.lastVote}`);
+      }
+
+      let nextVoteTime = new Date(baseTime + nextDelay);
+
+      // If calculated nextVote is in the past, vote can happen soon
+      if (nextVoteTime.getTime() < Date.now()) {
+        nextVoteTime = new Date(Date.now() + 30 * 1000); // 30 seconds from now
+        logger.info(`[${accountId}] ⚡ nextVote was in the past, scheduling in 30s`);
+      }
 
       updateAccountDb(accountId, {
-        lastVote: new Date().toISOString(),
+        lastVote: newLastVote,
         lastVoteStatus: result.status,
         nextVote: nextVoteTime.toISOString(),
       });
@@ -233,10 +251,28 @@ async function voteCycle() {
     // Update DB
     const now = new Date();
     const nextDelay = getNextDelay(lastResult.status);
-    const nextVoteTime = new Date(now.getTime() + nextDelay);
+
+    // For 'already_voted', calculate nextVote from the ORIGINAL lastVote time,
+    // not from now. This preserves the correct vote schedule.
+    let baseTime = now.getTime();
+    let newLastVote = now.toISOString();
+
+    if (lastResult.status === 'already_voted' && account.lastVote) {
+      baseTime = new Date(account.lastVote).getTime();
+      newLastVote = account.lastVote; // preserve original lastVote
+      logger.info(`[${account.id}] 📅 Keeping original lastVote: ${account.lastVote}`);
+    }
+
+    let nextVoteTime = new Date(baseTime + nextDelay);
+
+    // If calculated nextVote is in the past, vote can happen soon
+    if (nextVoteTime.getTime() < now.getTime()) {
+      nextVoteTime = new Date(now.getTime() + 30 * 1000); // 30 seconds from now
+      logger.info(`[${account.id}] ⚡ nextVote was in the past, scheduling in 30s`);
+    }
 
     updateAccountDb(account.id, {
-      lastVote: now.toISOString(),
+      lastVote: newLastVote,
       lastVoteStatus: lastResult.status,
       nextVote: nextVoteTime.toISOString(),
     });
