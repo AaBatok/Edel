@@ -410,12 +410,21 @@ export async function performVote(account = {}) {
 
         // Re-fetch fresh data after the wait
         logger.info(`${tag}📡 Re-fetching fresh round data...`);
-        rawData = await getCurrentRound(sf);
-        parsed = parseRoundData(rawData);
+        try {
+          rawData = await getCurrentRound(sf);
+          parsed = parseRoundData(rawData);
+        } catch (refetchErr) {
+          logger.warn(`${tag}⚠️ Re-fetch failed: ${refetchErr.message.substring(0, 100)}`);
+          parsed = null;
+        }
 
         if (parsed?.status === 'LOCKED' && parsed.fixtures.length > 0) {
           return doVoting(parsed, strategy, sf, tag);
         }
+
+        // Fallback: re-fetch returned empty/different data, use startRound response
+        logger.info(`${tag}🔄 Re-fetch returned empty data, using startRound response (${startParsed.fixtures.length} fixtures)`);
+        return doVoting(startParsed, strategy, sf, tag);
       }
 
       // Not ready yet — will retry on next cycle
