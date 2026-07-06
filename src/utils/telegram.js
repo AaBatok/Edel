@@ -40,6 +40,35 @@ export async function sendTelegram(text, { silent = false } = {}) {
 
     if (!res.ok) {
       const body = await res.text();
+      // If message is too long, truncate and retry
+      if (res.status === 400 && body.includes('too long')) {
+        logger.debug('Telegram message too long, truncating...');
+        const truncated = text.substring(0, 3900) + '\n\n... (truncated)';
+        const res2 = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: telegramChatId,
+            text: truncated,
+            parse_mode: 'Markdown',
+            disable_notification: silent,
+          }),
+        });
+        if (!res2.ok) {
+          // Try plain text as last resort
+          const res3 = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: telegramChatId,
+              text: truncated.replace(/[*_`\\]/g, ''),
+              disable_notification: silent,
+            }),
+          });
+          return res3.ok;
+        }
+        return res2.ok;
+      }
       // If Markdown fails, retry as plain text
       if (res.status === 400 && body.includes('parse entities')) {
         logger.debug('Telegram Markdown failed, retrying as plain text...');
@@ -82,12 +111,15 @@ function acctPrefix(accountId) {
 export async function notifyVoteSuccess(details = {}, accountId = null) {
   const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
   const prefix = accountId ? `[${accountId}] ` : '';
+  const roundDisplay = details.round && details.round.length > 30
+    ? details.round.substring(0, 30) + '...'
+    : (details.round || 'N/A');
   const msg = [
     `✅ ${prefix}*VOTE BERHASIL*`,
     '',
     `🗳️ Asset: *${details.asset || 'N/A'}*`,
     `🎯 Strategy: \`${details.strategy || 'N/A'}\``,
-    `📅 Round: ${details.round || 'N/A'}`,
+    `📅 Round: ${roundDisplay}`,
     `🕐 Waktu: ${time}`,
     details.note ? `📝 Note: ${details.note}` : '',
   ].filter(Boolean).join('\n');
