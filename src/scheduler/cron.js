@@ -596,6 +596,26 @@ function startCookieListener() {
 }
 
 /**
+ * Parse Canton/Daml decimal format: { units: "6350900000000", decimals: 10 } -> 635.09
+ */
+function parseCantonDecimal(val) {
+  if (!val) return 0;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') return parseFloat(val) || 0;
+  if (typeof val === 'object' && val.units !== undefined) {
+    const units = BigInt(val.units || '0');
+    const decimals = val.decimals || 0;
+    if (decimals === 0) return Number(units);
+    const divisor = BigInt(10 ** decimals);
+    const whole = units / divisor;
+    const remainder = units % divisor;
+    const fracStr = remainder.toString().padStart(decimals, '0');
+    return parseFloat(whole.toString() + '.' + fracStr);
+  }
+  return 0;
+}
+
+/**
  * Handle /balance command from Telegram.
  * Checks all accounts' balances and sends a formatted reply.
  */
@@ -603,13 +623,13 @@ async function handleBalanceCommand() {
   const accounts = getAccounts();
 
   if (accounts.length === 0) {
-    await sendTelegram('📋 Belum ada akun. Tambah akun dulu.');
+    await sendTelegram('No accounts found.');
     return;
   }
 
-  await sendTelegram(`⏳ Mengecek balance ${accounts.length} akun...`);
+  await sendTelegram('Mengecek balance ' + accounts.length + ' akun...');
 
-  const lines = ['💰 *BALANCE — SEMUA AKUN*', ''];
+  const lines = ['*BALANCE -- SEMUA AKUN*', ''];
   let totalEdelx = 0;
   let totalCC = 0;
   let okCount = 0;
@@ -618,14 +638,12 @@ async function handleBalanceCommand() {
   for (const account of accounts) {
     try {
       let balanceData = null;
-      let portfolioErr = null;
-      let balanceErr = null;
 
       // Try /portfolio first
       try {
         balanceData = await getPortfolio(account.sessionFile);
       } catch (e) {
-        portfolioErr = e.message.substring(0, 100);
+        // fallback
       }
 
       // Fallback to /balances
@@ -633,73 +651,30 @@ async function handleBalanceCommand() {
         try {
           balanceData = await getBalance(null, account.sessionFile);
         } catch (e) {
-          balanceErr = e.message.substring(0, 100);
+          // fallback
         }
       }
 
-      // DEBUG: Send raw response for first account to see format
-      if (account.id === accounts[0].id) {
-        const debugLines = [
-          `🔍 *DEBUG ${account.id}*`,
-          '',
-          `Portfolio err: ${portfolioErr || 'none'}`,
-          `Balance err: ${balanceErr || 'none'}`,
-          '',
-          `Type: ${typeof balanceData}`,
-          `IsArray: ${Array.isArray(balanceData)}`,
-          `Keys: ${balanceData ? Object.keys(balanceData).join(', ') : 'null'}`,
-          '',
-          `Raw (300 chars):`,
-          `\`${JSON.stringify(balanceData).substring(0, 300)}\``,
-        ];
-        await sendTelegram(debugLines.join('\n'));
-      }
-
-      // Parse balance data
       let edelx = 0;
       let edelxAvail = 0;
-      let edelxLocked = 0;
+      let edelxStaked = 0;
       let cc = 0;
       let ccAvail = 0;
 
       if (balanceData) {
-        const items = balanceData.balances || balanceData.instruments || balanceData.holdings
-          || (Array.isArray(balanceData) ? balanceData : null);
+        const items = balanceData.balances || (Array.isArray(balanceData) ? balanceData : null);
 
         if (items && Array.isArray(items)) {
           for (const item of items) {
-            const id = (item.instrumentId || item.instrument || item.ticker || item.symbol || item.id || '').toUpperCase();
-            const total = parseFloat(item.total || item.balance || item.amount || item.quantity || 0);
-            const avail = parseFloat(item.available || item.unlocked || item.free || 0);
-            const locked = parseFloat(item.locked || item.staked || item.allocated || 0);
+            const id = (item.instrumentId || item.instrument || item.id || '').toUpperCase();
 
-            if (id.includes('EDELX') || id.includes('EDEL')) {
-              edelx = total || (avail + locked);
-              edelxAvail = avail;
-              edelxLocked = locked;
+            if (id.includes('EDELX') || id === 'EDEL') {
+              edelx = parseCantonDecimal(item.total);
+              edelxAvail = parseCantonDecimal(item.available);
+              edelxStaked = parseCantonDecimal(item.staked || item.locked);
             } else if (id === 'CC') {
-              cc = total || (avail + locked);
-              ccAvail = avail;
-            }
-          }
-        } else if (typeof balanceData === 'object') {
-          for (const [key, val] of Object.entries(balanceData)) {
-            const k = key.toUpperCase();
-            if (k.includes('EDELX') || k.includes('EDEL')) {
-              if (typeof val === 'number') { edelx = val; edelxAvail = val; }
-              else if (val && typeof val === 'object') {
-                edelx = parseFloat(val.total || val.balance || 0);
-                edelxAvail = parseFloat(val.available || val.unlocked || 0);
-                edelxLocked = parseFloat(val.locked || val.staked || 0);
-                if (!edelx) edelx = edelxAvail + edelxLocked;
-              }
-            } else if (k === 'CC') {
-              if (typeof val === 'number') { cc = val; ccAvail = val; }
-              else if (val && typeof val === 'object') {
-                cc = parseFloat(val.total || val.balance || 0);
-                ccAvail = parseFloat(val.available || val.unlocked || 0);
-                if (!cc) cc = ccAvail;
-              }
+              cc = parseCantonDecimal(item.total);
+              ccAvail = parseCantonDecimal(item.available);
             }
           }
         }
@@ -709,38 +684,44 @@ async function handleBalanceCommand() {
       totalCC += cc;
       okCount++;
 
-      lines.push(`✅ *${account.id}*`);
-      lines.push(`   💎 EDELx: \`${edelx.toFixed(2)}\` _(${edelxAvail.toFixed(2)} avail / ${edelxLocked.toFixed(2)} locked)_`);
-      lines.push(`   🪙 CC: \`${cc.toFixed(2)}\` _(${ccAvail.toFixed(2)} avail)_`);
+      const edelxStr = edelx.toFixed(2);
+      const availStr = edelxAvail.toFixed(2);
+      const stakedStr = edelxStaked.toFixed(2);
+      const ccStr = cc.toFixed(2);
+      const ccAvailStr = ccAvail.toFixed(2);
+
+      lines.push('*' + account.id + '*');
+      lines.push('   EDELx: ' + edelxStr + ' (' + availStr + ' avail / ' + stakedStr + ' staked)');
+      lines.push('   CC: ' + ccStr + ' (' + ccAvailStr + ' avail)');
 
     } catch (err) {
       const isSession = err.message.includes('SESSION_EXPIRED');
       if (isSession) {
-        lines.push(`🔑 *${account.id}* — Session expired`);
+        lines.push('*' + account.id + '* -- Session expired');
         expiredCount++;
       } else {
-        lines.push(`❌ *${account.id}* — Error: ${err.message.substring(0, 50)}`);
+        lines.push('*' + account.id + '* -- Error: ' + err.message.substring(0, 50));
       }
     }
   }
 
   lines.push('');
-  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
-  lines.push(`📊 *TOTAL (${accounts.length} akun)*`);
-  lines.push(`   💎 EDELx: \`${totalEdelx.toFixed(2)}\``);
-  lines.push(`   🪙 CC: \`${totalCC.toFixed(2)}\``);
+  lines.push('*TOTAL (' + accounts.length + ' akun)*');
+  lines.push('   EDELx: ' + totalEdelx.toFixed(2));
+  lines.push('   CC: ' + totalCC.toFixed(2));
 
   if (expiredCount > 0) {
     lines.push('');
-    lines.push(`⚠️ ${expiredCount} akun session expired`);
+    lines.push(expiredCount + ' akun session expired');
   }
 
   lines.push('');
   const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-  lines.push(`🕐 ${time}`);
+  lines.push(time);
 
   await sendTelegram(lines.join('\n'));
 }
+
 
 /**
  * Handle /status command from Telegram.
