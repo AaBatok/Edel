@@ -629,7 +629,7 @@ async function handleBalanceCommand() {
 
   await sendTelegram('Mengecek balance ' + accounts.length + ' akun...');
 
-  const lines = ['*BALANCE -- SEMUA AKUN*', ''];
+  const lines = ['\ud83d\udcb0 *BALANCE \u2014 SEMUA AKUN*', ''];
   let totalEdelx = 0;
   let totalCC = 0;
   let okCount = 0;
@@ -690,25 +690,25 @@ async function handleBalanceCommand() {
       const ccStr = cc.toFixed(2);
       const ccAvailStr = ccAvail.toFixed(2);
 
-      lines.push('*' + account.id + '*');
-      lines.push('   EDELx: ' + edelxStr + ' (' + availStr + ' avail / ' + stakedStr + ' staked)');
-      lines.push('   CC: ' + ccStr + ' (' + ccAvailStr + ' avail)');
+      lines.push('\u2705 *' + account.id + '*');
+      lines.push('   \ud83d\udc8e EDELx: ' + edelxStr + ' (' + availStr + ' avail / ' + stakedStr + ' staked)');
+      lines.push('   \ud83e\ude99 CC: ' + ccStr + ' (' + ccAvailStr + ' avail)');
 
     } catch (err) {
       const isSession = err.message.includes('SESSION_EXPIRED');
       if (isSession) {
-        lines.push('*' + account.id + '* -- Session expired');
+        lines.push('\ud83d\udd11 *' + account.id + '* \u2014 Session expired');
         expiredCount++;
       } else {
-        lines.push('*' + account.id + '* -- Error: ' + err.message.substring(0, 50));
+        lines.push('\u274c *' + account.id + '* \u2014 Error: ' + err.message.substring(0, 50));
       }
     }
   }
 
   lines.push('');
-  lines.push('*TOTAL (' + accounts.length + ' akun)*');
-  lines.push('   EDELx: ' + totalEdelx.toFixed(2));
-  lines.push('   CC: ' + totalCC.toFixed(2));
+  lines.push('\ud83d\udcca *TOTAL (' + accounts.length + ' akun)*');
+  lines.push('   \ud83d\udc8e EDELx: ' + totalEdelx.toFixed(2));
+  lines.push('   \ud83e\ude99 CC: ' + totalCC.toFixed(2));
 
   if (expiredCount > 0) {
     lines.push('');
@@ -717,7 +717,7 @@ async function handleBalanceCommand() {
 
   lines.push('');
   const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-  lines.push(time);
+  lines.push('\ud83d\udd50 ' + time);
 
   await sendTelegram(lines.join('\n'));
 }
