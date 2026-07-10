@@ -1,6 +1,7 @@
 import config from '../utils/config.js';
 import logger, { logSeparator } from '../utils/logger.js';
 import { performVote } from '../bot/voter.js';
+import { getBalance, getPortfolio, getProfile } from '../api/client.js';
 // Cookie listener is built-in (startCookieListener)
 import { initDisplay, setAccounts, updateAccountStatus, destroyDisplay } from '../utils/display.js';
 import { getEnabledAccounts, getAccounts, updateAccountStatus as updateAccountDb, initDefaultAccount } from '../accounts/manager.js';
@@ -458,6 +459,34 @@ function startCookieListener() {
 
         const text = msg.text.trim();
 
+        // ── Handle /balance command ──
+        if (text === '/balance' || text === '/bal') {
+          await handleBalanceCommand();
+          continue;
+        }
+
+        // ── Handle /status command ──
+        if (text === '/status') {
+          await handleStatusCommand();
+          continue;
+        }
+
+        // ── Handle /help command ──
+        if (text === '/help' || text === '/start') {
+          await sendTelegram([
+            '🤖 *EDEL BOT — COMMANDS*',
+            '',
+            '💰 /balance — Cek balance semua akun',
+            '📊 /status — Status bot & akun',
+            '❓ /help — Tampilkan bantuan ini',
+            '',
+            '🍪 *Import Cookie:*',
+            '`A1 eyJhbGci...`',
+            '`A2 edel_session=eyJ...`',
+          ].join('\n'));
+          continue;
+        }
+
         // Parse cookie entries: supports single "A1 cookie" or bulk:
         // "A2\ncookie\nA3\ncookie\n..."  or  "A2 cookie\nA3 cookie\n..."
         const { updateAccountSession, getAccount } = await import('../accounts/manager.js');
@@ -564,6 +593,163 @@ function startCookieListener() {
 
   // Start polling
   poll();
+}
+
+/**
+ * Handle /balance command from Telegram.
+ * Checks all accounts' balances and sends a formatted reply.
+ */
+async function handleBalanceCommand() {
+  const accounts = getAccounts();
+
+  if (accounts.length === 0) {
+    await sendTelegram('📋 Belum ada akun. Tambah akun dulu.');
+    return;
+  }
+
+  await sendTelegram(`⏳ Mengecek balance ${accounts.length} akun...`);
+
+  const lines = ['💰 *BALANCE — SEMUA AKUN*', ''];
+  let totalEdelx = 0;
+  let totalCC = 0;
+  let okCount = 0;
+  let expiredCount = 0;
+
+  for (const account of accounts) {
+    try {
+      let balanceData = null;
+
+      // Try /portfolio first
+      try {
+        balanceData = await getPortfolio(account.sessionFile);
+      } catch (e) {
+        // fallback
+      }
+
+      // Fallback to /balances
+      if (!balanceData) {
+        try {
+          balanceData = await getBalance(null, account.sessionFile);
+        } catch (e) {
+          // fallback
+        }
+      }
+
+      // Parse balance data
+      let edelx = 0;
+      let edelxAvail = 0;
+      let edelxLocked = 0;
+      let cc = 0;
+      let ccAvail = 0;
+
+      if (balanceData) {
+        const items = balanceData.balances || balanceData.instruments || balanceData.holdings
+          || (Array.isArray(balanceData) ? balanceData : null);
+
+        if (items && Array.isArray(items)) {
+          for (const item of items) {
+            const id = (item.instrumentId || item.instrument || item.ticker || item.symbol || item.id || '').toUpperCase();
+            const total = parseFloat(item.total || item.balance || item.amount || item.quantity || 0);
+            const avail = parseFloat(item.available || item.unlocked || item.free || 0);
+            const locked = parseFloat(item.locked || item.staked || item.allocated || 0);
+
+            if (id.includes('EDELX') || id.includes('EDEL')) {
+              edelx = total || (avail + locked);
+              edelxAvail = avail;
+              edelxLocked = locked;
+            } else if (id === 'CC') {
+              cc = total || (avail + locked);
+              ccAvail = avail;
+            }
+          }
+        } else if (typeof balanceData === 'object') {
+          for (const [key, val] of Object.entries(balanceData)) {
+            const k = key.toUpperCase();
+            if (k.includes('EDELX') || k.includes('EDEL')) {
+              if (typeof val === 'number') { edelx = val; edelxAvail = val; }
+              else if (val && typeof val === 'object') {
+                edelx = parseFloat(val.total || val.balance || 0);
+                edelxAvail = parseFloat(val.available || val.unlocked || 0);
+                edelxLocked = parseFloat(val.locked || val.staked || 0);
+                if (!edelx) edelx = edelxAvail + edelxLocked;
+              }
+            } else if (k === 'CC') {
+              if (typeof val === 'number') { cc = val; ccAvail = val; }
+              else if (val && typeof val === 'object') {
+                cc = parseFloat(val.total || val.balance || 0);
+                ccAvail = parseFloat(val.available || val.unlocked || 0);
+                if (!cc) cc = ccAvail;
+              }
+            }
+          }
+        }
+      }
+
+      totalEdelx += edelx;
+      totalCC += cc;
+      okCount++;
+
+      lines.push(`✅ *${account.id}*`);
+      lines.push(`   💎 EDELx: \`${edelx.toFixed(2)}\` _(${edelxAvail.toFixed(2)} avail / ${edelxLocked.toFixed(2)} locked)_`);
+      lines.push(`   🪙 CC: \`${cc.toFixed(2)}\` _(${ccAvail.toFixed(2)} avail)_`);
+
+    } catch (err) {
+      const isSession = err.message.includes('SESSION_EXPIRED');
+      if (isSession) {
+        lines.push(`🔑 *${account.id}* — Session expired`);
+        expiredCount++;
+      } else {
+        lines.push(`❌ *${account.id}* — Error: ${err.message.substring(0, 50)}`);
+      }
+    }
+  }
+
+  lines.push('');
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━');
+  lines.push(`📊 *TOTAL (${accounts.length} akun)*`);
+  lines.push(`   💎 EDELx: \`${totalEdelx.toFixed(2)}\``);
+  lines.push(`   🪙 CC: \`${totalCC.toFixed(2)}\``);
+
+  if (expiredCount > 0) {
+    lines.push('');
+    lines.push(`⚠️ ${expiredCount} akun session expired`);
+  }
+
+  lines.push('');
+  const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  lines.push(`🕐 ${time}`);
+
+  await sendTelegram(lines.join('\n'));
+}
+
+/**
+ * Handle /status command from Telegram.
+ */
+async function handleStatusCommand() {
+  const allAccounts = getAccounts();
+  const enabled = getEnabledAccounts();
+  const time = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
+  const lines = ['📊 *BOT STATUS*', ''];
+  lines.push(`👥 Akun: ${enabled.length} enabled / ${allAccounts.length} total`);
+  lines.push(`🎯 Strategy: \`${config.voteStrategy}\``);
+  lines.push(`📅 Interval: ${config.voteIntervalMinutes}m + ${config.voteBufferMinutes}m buffer`);
+  lines.push('');
+
+  for (const acc of allAccounts) {
+    const emoji = acc.enabled ? '✅' : '⛔';
+    const lastVote = acc.lastVote
+      ? new Date(acc.lastVote).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+      : 'never';
+    const status = acc.lastVoteStatus || 'idle';
+    lines.push(`${emoji} *${acc.id}* | ${status} | Last: ${lastVote}`);
+  }
+
+  lines.push('');
+  lines.push(`🕐 ${time}`);
+
+  await sendTelegram(lines.join('\n'));
+
 }
 
 /**

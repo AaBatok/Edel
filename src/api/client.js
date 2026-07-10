@@ -223,6 +223,22 @@ export async function getDemandIndex(sessionFile) {
 }
 
 /**
+ * Get user portfolio (all instrument balances)
+ * GET /portfolio
+ */
+export async function getPortfolio(sessionFile) {
+  return apiGet('/portfolio', sessionFile);
+}
+
+/**
+ * Get user profile info
+ * GET /profile
+ */
+export async function getProfile(sessionFile) {
+  return apiGet('/profile', sessionFile);
+}
+
+/**
  * Get balance for an instrument
  * GET /balances?instrumentId=xxx
  */

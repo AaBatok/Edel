@@ -8,7 +8,8 @@
     "import": "node src/index.js import",
     "vote": "node src/index.js vote",
     "start": "node src/index.js start",
-    "status": "node src/index.js status"
+    "status": "node src/index.js status",
+    "balance": "node src/index.js balance"
   },
   "keywords": ["edel", "runway", "bot", "vote"],
   "license": "MIT",

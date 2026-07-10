@@ -2,7 +2,7 @@ import { validateConfig } from './utils/config.js';
 import config from './utils/config.js';
 import logger, { logSeparator } from './utils/logger.js';
 import { hasSession, getSessionAge, clearSession, importSession, importSessionFromFile } from './auth/session.js';
-import { checkSession } from './api/client.js';
+import { checkSession, getBalance, getPortfolio, getProfile } from './api/client.js';
 import { startScheduler, runSingleVote } from './scheduler/cron.js';
 import {
   getAccounts, getEnabledAccounts, addAccount, removeAccount,
@@ -192,6 +192,7 @@ Bot Commands:
   start          Mulai bot scheduler (auto vote semua akun)
   vote           Vote sekali untuk semua akun enabled
   status         Cek status semua akun
+  balance        💰 Cek balance EDELx & CC semua akun
   list           List semua akun
   help           Tampilkan bantuan ini
 
@@ -203,8 +204,9 @@ Account Management:
   clear [id]     Hapus session akun
 
 NPM Shortcuts:
-  npm run import  → setup akun (interactive wizard)
-  npm run start   → mulai bot scheduler
+  npm run import   → setup akun (interactive wizard)
+  npm run start    → mulai bot scheduler
+  npm run balance  → cek balance semua akun
   npm run vote    → vote sekali
 
 Telegram Cookie Import (saat bot running):
@@ -238,6 +240,168 @@ function listAccounts() {
     logger.info(`  ${enabled} ${acc.id} | Last: ${lastVote} | Status: ${status}`);
   }
   logSeparator();
+}
+
+/**
+ * Check balances for all accounts
+ */
+async function checkAllBalances() {
+  initDefaultAccount();
+  const accounts = getAccounts();
+
+  if (accounts.length === 0) {
+    logger.info('📋 Belum ada akun. Jalankan: node src/index.js add A1');
+    return;
+  }
+
+  console.log('');
+  console.log('\x1b[96m\x1b[1m  ╔══════════════════════════════════════════════════╗\x1b[0m');
+  console.log('\x1b[96m\x1b[1m  ║       💰 CEK BALANCE — SEMUA AKUN                ║\x1b[0m');
+  console.log('\x1b[96m\x1b[1m  ╚══════════════════════════════════════════════════╝\x1b[0m');
+  console.log('');
+
+  const results = [];
+  let totalEdelx = 0;
+  let totalCC = 0;
+
+  for (const account of accounts) {
+    const tag = `[${account.id}]`;
+    console.log(`\x1b[96m  ── ${account.id} ──────────────────────────────\x1b[0m`);
+
+    try {
+      // Try multiple endpoints for balance data
+      let balanceData = null;
+      let profileData = null;
+
+      // 1. Try /portfolio first (most complete)
+      try {
+        balanceData = await getPortfolio(account.sessionFile);
+        logger.debug(`${tag} Portfolio response: ${JSON.stringify(balanceData).substring(0, 300)}`);
+      } catch (e) {
+        logger.debug(`${tag} Portfolio failed: ${e.message.substring(0, 100)}`);
+      }
+
+      // 2. Fallback to /balances
+      if (!balanceData) {
+        try {
+          balanceData = await getBalance(null, account.sessionFile);
+          logger.debug(`${tag} Balances response: ${JSON.stringify(balanceData).substring(0, 300)}`);
+        } catch (e) {
+          logger.debug(`${tag} Balances failed: ${e.message.substring(0, 100)}`);
+        }
+      }
+
+      // 3. Try /profile for identity info
+      try {
+        profileData = await getProfile(account.sessionFile);
+        logger.debug(`${tag} Profile response: ${JSON.stringify(profileData).substring(0, 300)}`);
+      } catch (e) {
+        logger.debug(`${tag} Profile failed: ${e.message.substring(0, 100)}`);
+      }
+
+      // Parse balance data - handle various response shapes
+      let edelx = { total: 0, available: 0, locked: 0 };
+      let cc = { total: 0, available: 0, locked: 0 };
+      let partyId = profileData?.partyId || profileData?.cantonPartyId || profileData?.party?.id || null;
+      let username = profileData?.username || profileData?.name || profileData?.displayName || null;
+
+      if (balanceData) {
+        // Try to extract from different response shapes
+        const items = balanceData.balances || balanceData.instruments || balanceData.holdings
+          || (Array.isArray(balanceData) ? balanceData : null);
+
+        if (items && Array.isArray(items)) {
+          for (const item of items) {
+            const id = (item.instrumentId || item.instrument || item.ticker || item.symbol || item.id || '').toUpperCase();
+            const total = parseFloat(item.total || item.balance || item.amount || item.quantity || 0);
+            const available = parseFloat(item.available || item.unlocked || item.free || 0);
+            const locked = parseFloat(item.locked || item.staked || item.allocated || 0);
+
+            if (id.includes('EDELX') || id.includes('EDEL')) {
+              edelx = { total: total || (available + locked), available, locked };
+            } else if (id === 'CC') {
+              cc = { total: total || (available + locked), available, locked };
+            }
+          }
+        } else if (typeof balanceData === 'object') {
+          // Try flat object shape: { edelx: 250, cc: 0 } or { EDELx: { total, available, locked } }
+          for (const [key, val] of Object.entries(balanceData)) {
+            const k = key.toUpperCase();
+            if (k.includes('EDELX') || k.includes('EDEL')) {
+              if (typeof val === 'number') {
+                edelx = { total: val, available: val, locked: 0 };
+              } else if (typeof val === 'object' && val !== null) {
+                edelx = {
+                  total: parseFloat(val.total || val.balance || 0),
+                  available: parseFloat(val.available || val.unlocked || 0),
+                  locked: parseFloat(val.locked || val.staked || 0),
+                };
+                if (!edelx.total) edelx.total = edelx.available + edelx.locked;
+              }
+            } else if (k === 'CC') {
+              if (typeof val === 'number') {
+                cc = { total: val, available: val, locked: 0 };
+              } else if (typeof val === 'object' && val !== null) {
+                cc = {
+                  total: parseFloat(val.total || val.balance || 0),
+                  available: parseFloat(val.available || val.unlocked || 0),
+                  locked: parseFloat(val.locked || val.staked || 0),
+                };
+                if (!cc.total) cc.total = cc.available + cc.locked;
+              }
+            }
+          }
+        }
+      }
+
+      totalEdelx += edelx.total;
+      totalCC += cc.total;
+
+      // Display
+      if (username || partyId) {
+        const identity = username ? `\x1b[97m${username}\x1b[0m` : '';
+        const pid = partyId ? `\x1b[90m${partyId.substring(0, 30)}...\x1b[0m` : '';
+        console.log(`  👤 ${identity} ${pid}`);
+      }
+
+      console.log(`  💎 EDELx: \x1b[97m${edelx.total.toFixed(2)}\x1b[0m \x1b[90m(${edelx.available.toFixed(2)} available / ${edelx.locked.toFixed(2)} locked)\x1b[0m`);
+      console.log(`  🪙 CC:    \x1b[97m${cc.total.toFixed(2)}\x1b[0m \x1b[90m(${cc.available.toFixed(2)} available / ${cc.locked.toFixed(2)} locked)\x1b[0m`);
+
+      results.push({ id: account.id, edelx, cc, status: 'ok', username, partyId });
+
+    } catch (err) {
+      const isSession = err.message.includes('SESSION_EXPIRED');
+      if (isSession) {
+        console.log(`  \x1b[31m🔑 Session expired! Perlu update cookie.\x1b[0m`);
+      } else {
+        console.log(`  \x1b[31m❌ Error: ${err.message.substring(0, 80)}\x1b[0m`);
+      }
+      results.push({ id: account.id, edelx: { total: 0 }, cc: { total: 0 }, status: isSession ? 'expired' : 'error' });
+    }
+
+    console.log('');
+  }
+
+  // Summary
+  console.log('\x1b[35m  ════════════════════════════════════════════════\x1b[0m');
+  console.log(`  📊 \x1b[1mTOTAL (${results.length} akun)\x1b[0m`);
+  console.log(`     💎 EDELx: \x1b[92m${totalEdelx.toFixed(2)}\x1b[0m`);
+  console.log(`     🪙 CC:    \x1b[92m${totalCC.toFixed(2)}\x1b[0m`);
+  console.log('');
+
+  const okCount = results.filter(r => r.status === 'ok').length;
+  const expiredCount = results.filter(r => r.status === 'expired').length;
+  const errorCount = results.filter(r => r.status === 'error').length;
+
+  if (expiredCount > 0) {
+    console.log(`  \x1b[33m⚠️  ${expiredCount} akun session expired. Jalankan: npm run import\x1b[0m`);
+  }
+  if (errorCount > 0) {
+    console.log(`  \x1b[31m❌ ${errorCount} akun error.\x1b[0m`);
+  }
+  console.log(`  \x1b[32m✅ ${okCount}/${results.length} akun berhasil dicek.\x1b[0m`);
+  console.log('\x1b[35m  ════════════════════════════════════════════════\x1b[0m');
+  console.log('');
 }
 
 /**
@@ -368,6 +532,11 @@ async function main() {
 
       case 'status':
         await showStatus();
+        break;
+
+      case 'balance':
+      case 'bal':
+        await checkAllBalances();
         break;
 
       case 'clear': {
