@@ -618,12 +618,14 @@ async function handleBalanceCommand() {
   for (const account of accounts) {
     try {
       let balanceData = null;
+      let portfolioErr = null;
+      let balanceErr = null;
 
       // Try /portfolio first
       try {
         balanceData = await getPortfolio(account.sessionFile);
       } catch (e) {
-        // fallback
+        portfolioErr = e.message.substring(0, 100);
       }
 
       // Fallback to /balances
@@ -631,8 +633,26 @@ async function handleBalanceCommand() {
         try {
           balanceData = await getBalance(null, account.sessionFile);
         } catch (e) {
-          // fallback
+          balanceErr = e.message.substring(0, 100);
         }
+      }
+
+      // DEBUG: Send raw response for first account to see format
+      if (account.id === accounts[0].id) {
+        const debugLines = [
+          `🔍 *DEBUG ${account.id}*`,
+          '',
+          `Portfolio err: ${portfolioErr || 'none'}`,
+          `Balance err: ${balanceErr || 'none'}`,
+          '',
+          `Type: ${typeof balanceData}`,
+          `IsArray: ${Array.isArray(balanceData)}`,
+          `Keys: ${balanceData ? Object.keys(balanceData).join(', ') : 'null'}`,
+          '',
+          `Raw (300 chars):`,
+          `\`${JSON.stringify(balanceData).substring(0, 300)}\``,
+        ];
+        await sendTelegram(debugLines.join('\n'));
       }
 
       // Parse balance data
