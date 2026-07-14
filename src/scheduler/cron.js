@@ -103,6 +103,10 @@ function getNextDelay(result) {
     case 'voted':
     case 'already_voted':
       return (config.voteIntervalMinutes + config.voteBufferMinutes) * 60 * 1000;
+    case 'expired':
+      // Don't retry expired accounts on short intervals.
+      // The cookie listener will auto-trigger a vote when new cookie is imported.
+      return 24 * 60 * 60 * 1000; // 24 hours
     case 'waiting':
     case 'failed':
     default:
@@ -219,6 +223,14 @@ async function voteCycle() {
       }
     }
 
+    // Skip expired accounts that have already been notified — no point retrying
+    // until a new cookie is imported via Telegram (the cookie listener handles this)
+    if (account.lastVoteStatus === 'expired' && sessionExpiredNotified.has(account.id)) {
+      logger.info(`[${account.id}] ⏭️ Skip — session expired, waiting for cookie import`);
+      results.push({ accountId: account.id, status: 'expired', details: { note: 'skipped' } });
+      continue;
+    }
+
     // Retry logic per account
     let lastResult = null;
     for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
@@ -293,10 +305,10 @@ async function voteCycle() {
   }
 
   // Send summary ONLY if at least one account ACTUALLY ran and voted/failed this cycle
-  // Exclude skipped accounts (they carry old status like 'voted' from previous cycle)
+  // Exclude skipped accounts AND expired-only cycles (to avoid spamming SESSION EXPIRED)
   const hasRealActivity = results.some(r =>
     r.details?.note !== 'skipped'
-    && (r.status === 'voted' || r.status === 'failed' || r.status === 'expired')
+    && (r.status === 'voted' || r.status === 'failed')
   );
   if (results.length > 1 && hasRealActivity) {
     await notifyVoteSummary(results.map(r => ({
